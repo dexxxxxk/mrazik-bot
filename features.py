@@ -14,6 +14,35 @@ ADMIN = {'настройка','панель','заявки','проверить'
 GAMES = {'викторина','дуэль','экспедиция','предсказание','сундуки','угадай','рыбалка'}
 
 
+class TextDestination(app_commands.Transformer):
+    @property
+    def type(self): return discord.AppCommandOptionType.channel
+
+    @property
+    def channel_types(self): return [discord.ChannelType.text,discord.ChannelType.news]
+
+    async def transform(self,interaction,value):
+        # Keep Discord's partial channel; resolve via HTTP after deferring the response.
+        return value
+
+
+async def resolve_text_channel(client,guild_id,channel_id):
+    channel=client.get_channel(channel_id)
+    if channel is None:
+        try: channel=await client.fetch_channel(channel_id)
+        except discord.Forbidden as exc:
+            raise GameError('Мразик не видит выбранный канал. Разреши ему «Просматривать канал» в правах этого канала.') from exc
+        except discord.NotFound as exc:
+            raise GameError('Канал не найден. Выбери существующий текстовый канал.') from exc
+        except discord.HTTPException as exc:
+            raise GameError('Discord не ответил при загрузке канала. Попробуй ещё раз чуть позже.') from exc
+    if not isinstance(channel,discord.TextChannel):
+        raise GameError('Нужен обычный текстовый канал, а не голосовой канал, форум или ветка.')
+    if channel.guild.id!=guild_id:
+        raise GameError('Выбери канал этого сервера.')
+    return channel
+
+
 class CommandSelect(discord.ui.Select):
     def __init__(self, service):
         self.service = service
@@ -176,8 +205,10 @@ class FeatureService:
     async def tick(self):
         self.game.expire_events()
         for cfg in self.game.db.execute('SELECT * FROM settings').fetchall():
-            channel=self.bot.get_channel(cfg['channel'])
-            if not channel: continue
+            try: channel=await resolve_text_channel(self.bot,cfg['guild'],cfg['channel'])
+            except GameError:
+                log.warning('Game channel unavailable in guild %s',cfg['guild'])
+                continue
             e=self.game.claim_scheduled_event(cfg['guild'],cfg['channel'])
             if e:
                 try: await self.publish(channel,e)

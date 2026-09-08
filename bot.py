@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from content import OUTFITS, RANKS, QUIZ, FORTUNES, badges, rank
 from game import Game, GameError
-from features import FeatureService, EventButton
+from features import FeatureService, EventButton, resolve_text_channel, TextDestination
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
@@ -41,6 +41,8 @@ async def respond_error(i, error):
         text = str(error)
     elif isinstance(error, app_commands.MissingPermissions):
         text = 'Это действие для участника с правом «Управлять сервером».'
+    elif isinstance(error, app_commands.TransformerError):
+        text = 'Не удалось распознать параметр команды. Выбери канал заново из списка Discord; для настройки нужен обычный текстовый канал.'
     elif isinstance(error, app_commands.CommandOnCooldown):
         text = f'Не спеши. Повтори через {error.retry_after:.0f} сек.'
     else:
@@ -301,8 +303,10 @@ class Gnid(commands.Bot):
     async def daily_posts(self):
         for cfg in game.db.execute('SELECT * FROM settings WHERE automatic=1').fetchall():
             if game.now().hour<cfg['hour']: continue
-            channel=self.get_channel(cfg['channel'])
-            if not channel: continue
+            try: channel=await resolve_text_channel(self,cfg['guild'],cfg['channel'])
+            except GameError:
+                log.warning('Daily post channel unavailable in guild %s',cfg['guild'])
+                continue
             if not game.claim_post(cfg['guild']): continue
             try:
                 await channel.send(**card('Мразик принёс задание дня',
@@ -517,12 +521,16 @@ async def review_command(i:discord.Interaction,номер:int,одобрить:b
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def setup_command(i:discord.Interaction,канал:discord.TextChannel,час:app_commands.Range[int,0,23]=12,автопост:bool=False):
+async def setup_command(i:discord.Interaction,канал:app_commands.Transform[app_commands.AppCommandChannel,TextDestination],час:app_commands.Range[int,0,23]=12,автопост:bool=False):
+    await i.response.defer(ephemeral=True)
+    канал=await resolve_text_channel(i.client,i.guild_id,канал.id)
+    if not i.guild or not i.guild.me:
+        raise GameError('Мразик не найден среди участников сервера. Проверь установку приложения с ботом на сервер и перезапусти его.')
     perms=канал.permissions_for(i.guild.me)
     if not all([perms.view_channel,perms.send_messages,perms.embed_links,perms.attach_files,perms.read_message_history]):
         raise GameError('В канале нужны права: видеть канал, отправлять сообщения, вставлять ссылки, прикреплять файлы и читать историю.')
     game.configure(i.guild_id,канал.id,час,автопост)
-    await i.response.send_message(f'Игровой канал: {канал.mention}. Автопост: {автопост}, час {час}:00 ({game.tz}).\nТеперь отправь /панель в игровом канале.',ephemeral=True)
+    await i.followup.send(f'Игровой канал: {канал.mention}. Автопост: {автопост}, час {час}:00 ({game.tz}).\nТеперь отправь /панель в игровом канале.',ephemeral=True)
 
 
 @bot.tree.command(name='панель',description='Опубликовать главную панель Мразика в игровом канале')

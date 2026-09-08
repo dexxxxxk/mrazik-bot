@@ -6,7 +6,8 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
+import discord
 
 
 async def check():
@@ -26,6 +27,24 @@ async def check():
             obj=bot.pet_card(1,owner)
             assert 'личный питомец' in obj['embed'].title
             obj['file'].close()
+        channel=Mock(spec=discord.TextChannel)
+        channel.id=333;channel.guild=SimpleNamespace(id=1);channel.mention='<#333>'
+        channel.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=True,attach_files=True,read_message_history=True)
+        client=SimpleNamespace(get_channel=Mock(return_value=None),fetch_channel=AsyncMock(return_value=channel))
+        setup_i=SimpleNamespace(guild_id=1,guild=SimpleNamespace(me=object()),client=client,
+            response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
+        await bot.setup_command.callback(setup_i,SimpleNamespace(id=333),15,True)
+        assert bot.game.settings(1)['channel']==333
+        assert bot.game.settings(1)['automatic']==1
+        setup_i.response.defer.assert_awaited_once_with(ephemeral=True)
+        channel.permissions_for.return_value=discord.Permissions.none()
+        try:
+            await bot.setup_command.callback(setup_i,SimpleNamespace(id=333),16,False)
+            raise AssertionError('Missing channel permissions must reject configuration')
+        except bot.GameError: pass
+        assert bot.game.settings(1)['hour']==15
+        option=next(o for o in bot.setup_command.to_dict(bot.bot.tree)['options'] if o['name']=='канал')
+        assert option['type']==7 and set(option['channel_types'])=={0,5}
         assert bot.bot.intents.guilds
         assert not bot.bot.intents.message_content
         assert bot.HomeView().is_persistent()
