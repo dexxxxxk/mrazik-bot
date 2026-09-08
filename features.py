@@ -74,7 +74,7 @@ class FeatureService:
         for cmd in commands:
             params=' '.join(f'<{p.display_name}>' if p.required else f'[{p.display_name}]' for p in cmd.parameters)
             embed.add_field(name=f'/{cmd.name} {params}'.strip(),value=cmd.description,inline=False)
-        embed.set_footer(text='Роли зависят от личного опыта • Общий опыт Мразика отдельный')
+        embed.set_footer(text='У каждого свой Мразик • Опыт питомца определяет роль владельца')
         return embed
 
     async def help_response(self,i,category='start'):
@@ -159,7 +159,7 @@ class FeatureService:
             for role in roles.values(): self.check_role(guild,role)
             desired=roles[threshold]
             if desired not in member.roles:
-                await member.add_roles(desired,reason='Личный опыт в играх Мразика',atomic=True)
+                await member.add_roles(desired,reason='Опыт личного питомца Мразика',atomic=True)
             obsolete=[r for r in member.roles if r.id in mapping.values() and r.id!=desired.id]
             if obsolete: await member.remove_roles(*obsolete,reason='Обновление игрового ранга',atomic=True)
             self.game.role_ack(guild.id,uid,xp)
@@ -229,7 +229,7 @@ class FeatureService:
         @app_commands.guild_only()
         async def fish(i:discord.Interaction): await self.personal(i,'fish')
 
-        @tree.command(name='роль',description='Посмотреть и обновить свою Discord-роль по личному опыту')
+        @tree.command(name='роль',description='Посмотреть и обновить свою Discord-роль по опыту своего питомца')
         @app_commands.guild_only()
         async def role(i:discord.Interaction):
             await i.response.defer(ephemeral=True)

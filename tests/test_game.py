@@ -59,15 +59,14 @@ class GameTests(unittest.TestCase):
         with self.assertRaises(GameError): self.game.equip(1,10,'king')
         with self.assertRaises(GameError): self.game.equip(1,10,'king',True)
 
-    def test_shared_outfit_lock_and_independent_personal_outfit(self):
+    def test_equipping_changes_only_owners_pet_without_shared_lock(self):
         self.grant()
         self.game.purchase(1,10,'hobo')
         self.game.equip(1,10,'hobo',True)
-        self.assertEqual(self.game.pet(1)['outfit'],'hobo')
-        self.assertEqual(self.game.user(1,10)['outfit'],'base')
-        with self.assertRaises(GameError): self.game.equip(1,10,'base',True)
-        self.timestamp+=1801
-        self.game.equip(1,10,'base',True)
+        self.assertEqual(self.game.pet(1,10)['outfit'],'hobo')
+        self.assertEqual(self.game.pet(1,11)['outfit'],'base')
+        self.game.equip(1,10,'base')
+        self.assertEqual(self.game.pet(1,10)['outfit'],'base')
 
     def test_game_rewards_are_capped_daily_but_daily_bonus_is_separate(self):
         for _ in range(30): self.game.quiz_reward(1,10,True)
@@ -80,22 +79,21 @@ class GameTests(unittest.TestCase):
         self.assertEqual(self.game.quiz_reward(1,10,True),(25,15))
 
     def test_failed_care_rolls_back_cooldowns(self):
-        self.game.pet(1)
-        self.game.db.execute('UPDATE pets SET food=100 WHERE guild=1')
+        self.game.pet(1,10)
+        self.game.db.execute('UPDATE personal_pets SET food=100 WHERE guild=1 AND uid=10')
         with self.assertRaises(GameError): self.game.care(1,10,'feed')
         self.assertEqual(self.game.care(1,10,'play'),(10,10))
         with self.assertRaises(GameError): self.game.care(1,10,'play')
 
-    def test_global_care_cooldown_blocks_other_users(self):
+    def test_personal_care_does_not_block_other_users(self):
         self.game.care(1,10,'play')
-        with self.assertRaises(GameError): self.game.care(1,11,'play')
-        self.timestamp+=31
         self.assertEqual(self.game.care(1,11,'play'),(10,10))
+        with self.assertRaises(GameError):self.game.care(1,10,'play')
 
     def test_pet_never_dies_and_stats_are_bounded_after_long_absence(self):
-        self.game.pet(1)
+        self.game.pet(1,10)
         self.timestamp+=365*86400
-        p=self.game.pet(1)
+        p=self.game.pet(1,10)
         self.assertEqual((p['food'],p['mood'],p['energy']),(0,0,100))
 
     def test_servers_have_separate_balances_pets_and_cooldowns(self):
@@ -105,7 +103,8 @@ class GameTests(unittest.TestCase):
         self.game.cooldown(1,10,'quiz',60)
         self.game.cooldown(2,10,'quiz',60)
         self.game.care(1,10,'feed')
-        self.assertEqual(self.game.pet(2)['xp'],0)
+        self.assertEqual(self.game.pet(2,10)['xp'],20)
+        self.assertEqual(self.game.pet(2,11)['xp'],0)
 
     def test_submissions_are_once_per_day_and_review_once(self):
         sid=self.game.submit(1,10,'Мем','')

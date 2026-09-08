@@ -11,9 +11,10 @@ from activities import ActivitiesMixin, GameError
 
 
 from quiz_history import QuizHistoryMixin
+from personal_pets import PersonalPetsMixin
 
 
-class Game(ActivitiesMixin, QuizHistoryMixin):
+class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin):
     def __init__(self, path='data/gnid.sqlite3', tz='Europe/Moscow', clock=time.time):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, isolation_level=None)
@@ -49,6 +50,7 @@ class Game(ActivitiesMixin, QuizHistoryMixin):
         ''')
         self.init_v2()
         self.init_quiz_history()
+        self.init_personal_pets()
 
     @contextmanager
     def tx(self):
@@ -128,33 +130,18 @@ class Game(ActivitiesMixin, QuizHistoryMixin):
             self.db.execute('INSERT INTO owned VALUES(?,?,?)', (g,u,item))
 
     def equip(self, g, u, item, shared=False):
+        # Legacy argument retained for old call sites; all dress operations are personal now.
         with self.tx():
             self.user(g,u)
             if item not in self.owned(g,u): raise GameError('Сначала купи этот костюм.')
-            if shared:
-                pet = self.pet(g)
-                if pet['dressed_until'] > self.clock():
-                    raise GameError(f"Мразик уже нарядился. Смена образа через {int(pet['dressed_until']-self.clock())+1} сек.")
-                self.db.execute('UPDATE pets SET outfit=?,dressed_until=? WHERE guild=?',
-                                (item,self.clock()+1800,g))
-            else:
-                self.db.execute('UPDATE users SET outfit=? WHERE guild=? AND uid=?', (item,g,u))
-
-    def pet(self, g):
-        self.db.execute('INSERT OR IGNORE INTO pets(guild,updated) VALUES(?,?)', (g,self.clock()))
-        pet = dict(self.db.execute('SELECT * FROM pets WHERE guild=?', (g,)).fetchone())
-        hours = max(0,(self.clock()-pet['updated'])/3600)
-        for key, rate in [('food',3), ('mood',2), ('energy',-4)]:
-            pet[key] = max(0,min(100,pet[key]-hours*rate))
-        return pet
+            self.db.execute('UPDATE users SET outfit=? WHERE guild=? AND uid=?',(item,g,u))
 
     def care(self, g, u, action):
         if action not in ('feed','play','sleep'): raise GameError('Неизвестное действие.')
         with self.tx():
             self.user(g,u)
             self._cooldown(g,u,'care',900)
-            self._cooldown(g,0,'care:'+action,30)
-            p = self.pet(g)
+            p = self.pet(g,u)
             if action=='feed':
                 if p['food']>85: raise GameError('Не пихай. Мразик уже сыт.')
                 p['food']=min(100,p['food']+20)
@@ -165,8 +152,8 @@ class Game(ActivitiesMixin, QuizHistoryMixin):
             else:
                 if p['energy']>80: raise GameError('Мразик уже выспался и планирует пакости.')
                 p['energy']=min(100,p['energy']+30)
-            self.db.execute('UPDATE pets SET food=?,mood=?,energy=?,updated=?,xp=xp+10 WHERE guild=?',
-                            (p['food'],p['mood'],p['energy'],self.clock(),g))
+            self.db.execute('UPDATE personal_pets SET food=?,mood=?,energy=?,updated=? WHERE guild=? AND uid=?',
+                            (p['food'],p['mood'],p['energy'],self.clock(),g,u))
             self.db.execute('UPDATE users SET care=care+1 WHERE guild=? AND uid=?', (g,u))
             return self._reward(g,u,10,10)
 
@@ -257,5 +244,5 @@ class Game(ActivitiesMixin, QuizHistoryMixin):
 
     def delete_user(self, g, u):
         with self.tx():
-            for table in ['users','owned','cooldowns','earnings','weekly','submissions','titles']:
+            for table in ['users','owned','cooldowns','earnings','weekly','submissions','titles','personal_pets','quiz_seen','quiz_daily','role_queue']:
                 self.db.execute(f'DELETE FROM {table} WHERE guild=? AND uid=?',(g,u))

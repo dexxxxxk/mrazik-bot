@@ -57,6 +57,9 @@ async def allowed(i, bypass_channel=False):
         await i.response.send_message('Мразик живёт на сервере. В личке не играем.', ephemeral=True)
         return False
     config = game.settings(i.guild_id)
+    if not bypass_channel and not config:
+        await i.response.send_message('Сначала модератор должен выбрать игровой канал: /настройка.',ephemeral=True)
+        return False
     if not bypass_channel and config and i.channel_id != config['channel']:
         await i.response.send_message(f"Играем в <#{config['channel']}>.",ephemeral=True)
         return False
@@ -103,19 +106,19 @@ def profile(g,u):
     own = game.owned(g,u)
     awards = badges(p,own)
     nxt = next((x for x in RANKS if x[0]>p['xp']),None)
-    body = (f"**{rank(p['xp'])}**\n🪙 {p['coins']} монеток · ✨ {p['xp']} опыта\n"
+    body = (f"**{rank(p['xp'])}**\n🪙 {p['coins']} монеток · ✨ {p['xp']} опыта питомца\n"
             f"Серия визитов: {p['streak']} · Победы: {p['wins']} · Ответы: {p['correct']}\n"
             f"Костюм: {OUTFITS[p['outfit']]['name']}\n"
             + (f'Следующий ранг: {nxt[1]} — ещё {nxt[0]-p["xp"]} опыта.\n' if nxt else 'Высший ранг достигнут.\n')
             + ('\n'+' · '.join(awards) if awards else '\nДостижения ещё впереди.'))
-    return card('Паспорт обитателя',body,p['outfit'])
+    return card('Паспорт твоего Мразика',body,p['outfit'])
 
 
-def pet_card(g):
-    p=game.pet(g)
+def pet_card(g,u):
+    p=game.pet(g,u)
     art = 'hungry' if p['food']<20 else ('sleep' if p['energy']<20 else p['outfit'])
-    return card('Мразик • общий питомец',
-        f"**{rank(p['xp'])}** · {p['xp']} общего опыта\n"
+    return card('Твой Мразик • личный питомец',
+        f"**{rank(p['xp'])}** · {p['xp']} опыта питомца\n"
         f"🥣 Сытость: {p['food']:.0f}/100\n🎭 Настроение: {p['mood']:.0f}/100\n⚡ Энергия: {p['energy']:.0f}/100\n"
         f"👕 {OUTFITS[p['outfit']]['name']}\n\nНе умрёт без внимания. Просто станет ещё противнее.",art)
 
@@ -142,7 +145,7 @@ class PetView(SafeView):
 
     @discord.ui.button(label='Обновить состояние',custom_id='gnid:refresh:v1',row=1)
     async def refresh(self,i,button):
-        await i.response.send_message(**pet_card(i.guild_id),ephemeral=True)
+        await i.response.send_message(**pet_card(i.guild_id,i.user.id),ephemeral=True)
 
 
 class HomeView(SafeView):
@@ -155,9 +158,9 @@ class HomeView(SafeView):
     @discord.ui.button(label='Подачка дня',emoji='🪙',custom_id='gnid:daily:v1',style=discord.ButtonStyle.success)
     async def daily(self,i,button): await daily_response(i)
 
-    @discord.ui.button(label='Наш Мразик',emoji='🐾',custom_id='gnid:pet:v1')
+    @discord.ui.button(label='Мой Мразик',emoji='🐾',custom_id='gnid:pet:v1')
     async def pet(self,i,button):
-        await i.response.send_message(**pet_card(i.guild_id),view=PetView(),ephemeral=True)
+        await i.response.send_message(**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
 
     @discord.ui.button(label='Магазин',emoji='👕',custom_id='gnid:shop:v1',row=1)
     async def shop(self,i,button): await shop_response(i)
@@ -188,9 +191,9 @@ class OutfitSelect(discord.ui.Select):
         key=self.values[0]
         if self.mode=='buy':
             game.purchase(i.guild_id,i.user.id,key)
-            text='Куплено! Надеть на свой профиль: /гардероб. На общего Мразика: /одеть.'
+            text='Куплено! Надеть на своего Мразика: /гардероб или /одеть.'
         else:
-            game.equip(i.guild_id,i.user.id,key,self.mode=='shared')
+            game.equip(i.guild_id,i.user.id,key)
             text='Мразик нарядился. И немедленно заважничал.'
         await i.response.send_message(**card(OUTFITS[key]['name'],text,key),ephemeral=True)
 
@@ -345,10 +348,10 @@ async def profile_command(i:discord.Interaction):
 async def daily_command(i:discord.Interaction): await daily_response(i)
 
 
-@bot.tree.command(name='мразик',description='Посмотреть на общего Мразика, покормить и поиграть')
+@bot.tree.command(name='мразик',description='Открыть своего Мразика: состояние, опыт, кормление и игры')
 @app_commands.guild_only()
 async def pet_command(i:discord.Interaction):
-    await i.response.send_message(**pet_card(i.guild_id),view=PetView(),ephemeral=True)
+    await i.response.send_message(**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
 
 
 @bot.tree.command(name='магазин',description='Купить костюм за игровые монетки')
@@ -365,19 +368,19 @@ async def wardrobe_command(i:discord.Interaction):
     await send_view(i,view,**card('Твои тряпки','\n'.join(OUTFITS[k]['name'] for k in owned)),ephemeral=True)
 
 
-@bot.tree.command(name='одеть',description='Надеть свой костюм на общего Мразика; смена раз в 30 минут')
+@bot.tree.command(name='одеть',description='Надеть купленный костюм на своего Мразика')
 @app_commands.guild_only()
 async def dress_command(i:discord.Interaction):
     view=SafeView()
-    view.add_item(OutfitSelect(i.user.id,'shared',game.owned(i.guild_id,i.user.id)))
-    await send_view(i,view,**card('Наряди общую мразоту','Выбирай из своей коллекции. Образ общий для всего сервера.'),ephemeral=True)
+    view.add_item(OutfitSelect(i.user.id,'personal',game.owned(i.guild_id,i.user.id)))
+    await send_view(i,view,**card('Наряди своего Мразика','Выбирай из своей коллекции. Переодеваешь только своего питомца.'),ephemeral=True)
 
 
 @bot.tree.command(name='ранги',description='Ранги участников и пороги опыта')
 @app_commands.guild_only()
 async def ranks_command(i:discord.Interaction):
     await i.response.send_message(**card('Лестница сомнительного успеха',
-        '\n'.join(f'**{name}** — {xp} XP' for xp,name in RANKS)+'\n\nРанг зависит от личного опыта. Discord-роли включает модератор: /роли_настроить. Костюмы покупаются отдельно.','king'),ephemeral=True)
+        '\n'.join(f'**{name}** — {xp} XP' for xp,name in RANKS)+'\n\nРанг зависит от опыта твоего питомца. Discord-роли включает модератор: /роли_настроить. Костюмы покупаются отдельно.','king'),ephemeral=True)
 
 
 ART_NAMES={**{k:v['name'] for k,v in OUTFITS.items()},'hungry':'Голодный Мразик',
@@ -530,7 +533,7 @@ async def panel_command(i:discord.Interaction):
     if not await allowed(i): return
     await i.response.send_message(**card('Мразотное Логово',
         'Я Мразик. Живу тут, жру тут, осуждаю тоже тут.\n\n'
-        'Копи монетки, собирай тряпки, вызывай друзей на дуэли. Кнопки ниже — твой вход в Логово.\n'
+        'Прокачивай своего Мразика, собирай тряпки, вызывай друзей на дуэли. Кнопки ниже — твой вход в Логово.\n'
         'Все команды: /помощь.'),view=HomeView())
 
 

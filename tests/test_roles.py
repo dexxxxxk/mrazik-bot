@@ -36,7 +36,7 @@ class RoleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upgrade_removes_only_managed_rank(self):
         await self.service.sync_role(self.guild,10)
-        self.member.add_roles.assert_awaited_once_with(self.roles[3],reason='Личный опыт в играх Мразика',atomic=True)
+        self.member.add_roles.assert_awaited_once_with(self.roles[3],reason='Опыт личного питомца Мразика',atomic=True)
         self.member.remove_roles.assert_awaited_once_with(self.roles[1],reason='Обновление игрового ранга',atomic=True)
         self.assertEqual(self.game.db.execute('SELECT count(*) FROM role_queue').fetchone()[0],0)
 

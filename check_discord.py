@@ -5,12 +5,27 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 
 async def check():
     with tempfile.TemporaryDirectory() as tmp:
         os.environ['DATABASE_PATH']=str(Path(tmp)/'check.sqlite3')
         import bot
+        response=SimpleNamespace(send_message=AsyncMock())
+        interaction=SimpleNamespace(guild_id=1,channel_id=100,response=response)
+        assert not await bot.allowed(interaction)
+        bot.game.configure(1,200,12,False)
+        assert not await bot.allowed(interaction)
+        assert all(call.kwargs.get('ephemeral') is True for call in response.send_message.await_args_list)
+        interaction.channel_id=200
+        assert await bot.allowed(interaction)
+        assert await bot.allowed(SimpleNamespace(guild_id=1,channel_id=999,response=response),True)
+        for owner in [10,20]:
+            obj=bot.pet_card(1,owner)
+            assert 'личный питомец' in obj['embed'].title
+            obj['file'].close()
         assert bot.bot.intents.guilds
         assert not bot.bot.intents.message_content
         assert bot.HomeView().is_persistent()
@@ -37,7 +52,7 @@ async def check():
         view=bot.DuelView(1,2)
         assert len(view.children)==5
         view.stop()
-        print(f'OK: {len(cmds)} slash commands, persistent views, 16 PNG assets; no network connection.')
+        print(f'OK: {len(cmds)} slash commands, persistent views, channel isolation, personal pet cards, 16 PNG assets; no network connection.')
         bot.game.db.close()
 
 
