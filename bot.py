@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import random
+import time
 import uuid
 from pathlib import Path
 import discord
@@ -37,6 +38,9 @@ def card(title, description, art='base'):
 
 async def respond_error(i, error):
     error = getattr(error, 'original', error)
+    if isinstance(error, discord.HTTPException) and error.code in (10062,40060,10015):
+        log.warning('Interaction unavailable: command=%s code=%s; no retry',getattr(i.command,'name','button'),error.code)
+        return
     if isinstance(error, GameError):
         text = str(error)
     elif isinstance(error, app_commands.MissingPermissions):
@@ -48,16 +52,21 @@ async def respond_error(i, error):
     else:
         log.error('Interaction failed', exc_info=(type(error),error,error.__traceback__))
         text = 'Мразик споткнулся. Попробуй снова; если повторится — сообщи владельцу бота.'
-    if i.response.is_done():
-        await i.followup.send(text, ephemeral=True)
-    else:
-        await i.response.send_message(text, ephemeral=True)
+    try:
+        if i.response.is_done():
+            await i.followup.send(text, ephemeral=True)
+        else:
+            await i.response.send_message(text, ephemeral=True)
+    except discord.HTTPException as delivery_error:
+        log.warning('Could not deliver private error: command=%s code=%s',getattr(i.command,'name','button'),delivery_error.code)
 
 
 async def allowed(i, bypass_channel=False):
     if not i.guild_id:
         await i.response.send_message('Мразик живёт на сервере. В личке не играем.', ephemeral=True)
         return False
+    if bypass_channel:
+        return True
     config = game.settings(i.guild_id)
     if not bypass_channel and not config:
         await i.response.send_message('Сначала модератор должен выбрать игровой канал: /настройка.',ephemeral=True)
@@ -522,7 +531,14 @@ async def review_command(i:discord.Interaction,номер:int,одобрить:b
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.checks.has_permissions(manage_guild=True)
 async def setup_command(i:discord.Interaction,канал:app_commands.Transform[app_commands.AppCommandChannel,TextDestination],час:app_commands.Range[int,0,23]=12,автопост:bool=False):
-    await i.response.defer(ephemeral=True)
+    started=time.monotonic()
+    age=(discord.utils.utcnow()-i.created_at).total_seconds()
+    try:
+        await i.response.defer(ephemeral=True)
+    except discord.HTTPException as exc:
+        log.warning('Setup ACK failed: code=%s age_at_start=%.3fs request_elapsed=%.3fs gateway_latency=%.3fs',
+            exc.code,age,time.monotonic()-started,i.client.latency)
+        raise
     канал=await resolve_text_channel(i.client,i.guild_id,канал.id)
     if not i.guild or not i.guild.me:
         raise GameError('Мразик не найден среди участников сервера. Проверь установку приложения с ботом на сервер и перезапусти его.')
@@ -557,6 +573,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
+    log.info('Mrazik build 3.2: TextDestination + interaction deadline diagnostics')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)
