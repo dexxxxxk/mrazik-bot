@@ -7,13 +7,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from content import OUTFITS, QUESTS, TITLES
+from activities import ActivitiesMixin, GameError
 
 
-class GameError(Exception):
-    pass
+from quiz_history import QuizHistoryMixin
 
 
-class Game:
+class Game(ActivitiesMixin, QuizHistoryMixin):
     def __init__(self, path='data/gnid.sqlite3', tz='Europe/Moscow', clock=time.time):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, isolation_level=None)
@@ -47,6 +47,8 @@ class Game:
           guild INTEGER, uid INTEGER, day TEXT, body TEXT, url TEXT, status TEXT DEFAULT 'pending',
           reviewer INTEGER, UNIQUE(guild,uid,day));
         ''')
+        self.init_v2()
+        self.init_quiz_history()
 
     @contextmanager
     def tx(self):
@@ -80,7 +82,7 @@ class Game:
         r = self.db.execute('SELECT until FROM cooldowns WHERE guild=? AND uid=? AND action=?',
                             (g,u,action)).fetchone()
         if r and r[0] > self.clock():
-            raise GameError(f'Гнидь отдыхает. Повтори через {int(r[0]-self.clock())+1} сек.')
+            raise GameError(f'Мразик отдыхает. Повтори через {int(r[0]-self.clock())+1} сек.')
         self.db.execute('INSERT OR REPLACE INTO cooldowns VALUES(?,?,?,?)',
                         (g,u,action,self.clock()+seconds))
 
@@ -100,6 +102,7 @@ class Game:
         self.db.execute('UPDATE users SET coins=coins+?,xp=xp+? WHERE guild=? AND uid=?', (coins,xp,g,u))
         self.db.execute('''INSERT INTO weekly VALUES(?,?,?,?) ON CONFLICT(guild,uid,week)
             DO UPDATE SET xp=xp+excluded.xp''', (g,u,self.week(),xp))
+        self.queue_role(g,u)
         return coins,xp
 
     def daily(self, g, u):
@@ -120,7 +123,7 @@ class Game:
             user, info = self.user(g,u), OUTFITS[item]
             if item in self.owned(g,u): raise GameError('Эта тряпка уже твоя.')
             if user['xp'] < info['xp']: raise GameError(f"Нужно {info['xp']} опыта. Пока не дорос.")
-            if user['coins'] < info['price']: raise GameError('Монеток не хватает. Гнидь в долг не даёт.')
+            if user['coins'] < info['price']: raise GameError('Монеток не хватает. Мразик в долг не даёт.')
             self.db.execute('UPDATE users SET coins=coins-? WHERE guild=? AND uid=?', (info['price'],g,u))
             self.db.execute('INSERT INTO owned VALUES(?,?,?)', (g,u,item))
 
@@ -131,7 +134,7 @@ class Game:
             if shared:
                 pet = self.pet(g)
                 if pet['dressed_until'] > self.clock():
-                    raise GameError(f"Гнидь уже нарядился. Смена образа через {int(pet['dressed_until']-self.clock())+1} сек.")
+                    raise GameError(f"Мразик уже нарядился. Смена образа через {int(pet['dressed_until']-self.clock())+1} сек.")
                 self.db.execute('UPDATE pets SET outfit=?,dressed_until=? WHERE guild=?',
                                 (item,self.clock()+1800,g))
             else:
@@ -153,14 +156,14 @@ class Game:
             self._cooldown(g,0,'care:'+action,30)
             p = self.pet(g)
             if action=='feed':
-                if p['food']>85: raise GameError('Не пихай. Гнидь уже сыт.')
+                if p['food']>85: raise GameError('Не пихай. Мразик уже сыт.')
                 p['food']=min(100,p['food']+20)
             elif action=='play':
                 if p['energy']<15: raise GameError('Сил нет. Уложи эту мразоту спать.')
                 p['mood']=min(100,p['mood']+20)
                 p['energy']-=15
             else:
-                if p['energy']>80: raise GameError('Гнидь уже выспался и планирует пакости.')
+                if p['energy']>80: raise GameError('Мразик уже выспался и планирует пакости.')
                 p['energy']=min(100,p['energy']+30)
             self.db.execute('UPDATE pets SET food=?,mood=?,energy=?,updated=?,xp=xp+10 WHERE guild=?',
                             (p['food'],p['mood'],p['energy'],self.clock(),g))

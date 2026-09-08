@@ -1,4 +1,4 @@
-"""Гнидь: развлечения для Мразотного Логова. Python 3.11+."""
+"""Мразик: развлечения для Мразотного Логова. Python 3.11+."""
 import asyncio
 import logging
 import os
@@ -11,6 +11,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from content import OUTFITS, RANKS, QUIZ, FORTUNES, badges, rank
 from game import Game, GameError
+from features import FeatureService, EventButton
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
@@ -25,7 +26,7 @@ def reward_text(reward):
 
 def card(title, description, art='base'):
     embed = discord.Embed(title=title, description=description, color=0x9BA95B)
-    embed.set_footer(text='Мразотное Логово • Гнидь всё записывает')
+    embed.set_footer(text='Мразотное Логово • Мразик всё записывает')
     path = ROOT / 'assets' / f'{art}.png'
     kwargs = {'embed':embed}
     if path.is_file():
@@ -44,7 +45,7 @@ async def respond_error(i, error):
         text = f'Не спеши. Повтори через {error.retry_after:.0f} сек.'
     else:
         log.error('Interaction failed', exc_info=(type(error),error,error.__traceback__))
-        text = 'Гнидь споткнулся. Попробуй снова; если повторится — сообщи владельцу бота.'
+        text = 'Мразик споткнулся. Попробуй снова; если повторится — сообщи владельцу бота.'
     if i.response.is_done():
         await i.followup.send(text, ephemeral=True)
     else:
@@ -53,7 +54,7 @@ async def respond_error(i, error):
 
 async def allowed(i, bypass_channel=False):
     if not i.guild_id:
-        await i.response.send_message('Гнидь живёт на сервере. В личке не играем.', ephemeral=True)
+        await i.response.send_message('Мразик живёт на сервере. В личке не играем.', ephemeral=True)
         return False
     config = game.settings(i.guild_id)
     if not bypass_channel and config and i.channel_id != config['channel']:
@@ -64,7 +65,7 @@ async def allowed(i, bypass_channel=False):
 
 class Tree(app_commands.CommandTree):
     async def interaction_check(self, i):
-        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель'}
+        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль'}
         return await allowed(i, bypass)
 
     async def on_error(self, i, error):
@@ -113,7 +114,7 @@ def profile(g,u):
 def pet_card(g):
     p=game.pet(g)
     art = 'hungry' if p['food']<20 else ('sleep' if p['energy']<20 else p['outfit'])
-    return card('Гнидь • общий питомец',
+    return card('Мразик • общий питомец',
         f"**{rank(p['xp'])}** · {p['xp']} общего опыта\n"
         f"🥣 Сытость: {p['food']:.0f}/100\n🎭 Настроение: {p['mood']:.0f}/100\n⚡ Энергия: {p['energy']:.0f}/100\n"
         f"👕 {OUTFITS[p['outfit']]['name']}\n\nНе умрёт без внимания. Просто станет ещё противнее.",art)
@@ -154,7 +155,7 @@ class HomeView(SafeView):
     @discord.ui.button(label='Подачка дня',emoji='🪙',custom_id='gnid:daily:v1',style=discord.ButtonStyle.success)
     async def daily(self,i,button): await daily_response(i)
 
-    @discord.ui.button(label='Наш Гнидь',emoji='🐾',custom_id='gnid:pet:v1')
+    @discord.ui.button(label='Наш Мразик',emoji='🐾',custom_id='gnid:pet:v1')
     async def pet(self,i,button):
         await i.response.send_message(**pet_card(i.guild_id),view=PetView(),ephemeral=True)
 
@@ -166,6 +167,12 @@ class HomeView(SafeView):
 
     @discord.ui.button(label='Задание дня',emoji='🎯',custom_id='gnid:quest:v1',row=1)
     async def quest(self,i,button): await quest_response(i)
+
+    @discord.ui.button(label='Все команды',emoji='📖',custom_id='mrazik:help:v2',row=2)
+    async def help_button(self,i,button): await bot.features.help_response(i)
+
+    @discord.ui.button(label='Больше игр',emoji='🎮',custom_id='mrazik:games:v2',row=2)
+    async def games_button(self,i,button): await bot.features.help_response(i,'games')
 
 
 class OutfitSelect(discord.ui.Select):
@@ -181,10 +188,10 @@ class OutfitSelect(discord.ui.Select):
         key=self.values[0]
         if self.mode=='buy':
             game.purchase(i.guild_id,i.user.id,key)
-            text='Куплено! Надеть на свой профиль: /гардероб. На общего Гнидя: /одеть.'
+            text='Куплено! Надеть на свой профиль: /гардероб. На общего Мразика: /одеть.'
         else:
             game.equip(i.guild_id,i.user.id,key,self.mode=='shared')
-            text='Гнидь нарядился. И немедленно заважничал.'
+            text='Мразик нарядился. И немедленно заважничал.'
         await i.response.send_message(**card(OUTFITS[key]['name'],text,key),ephemeral=True)
 
 
@@ -196,34 +203,8 @@ async def shop_response(i):
     await send_view(i,view,**card('Лавка подозрительного тряпья',body,'gopnik'),ephemeral=True)
 
 
-class QuizView(SafeView):
-    def __init__(self,owner,options,answer):
-        super().__init__(timeout=45)
-        self.owner,self.answer,self.done=owner,answer,False
-        for label in options:
-            b=discord.ui.Button(label=label)
-            async def callback(i, choice=label):
-                if i.user.id!=self.owner:
-                    return await i.response.send_message('Это чужой вопрос. Открой /викторина.',ephemeral=True)
-                if self.done: raise GameError('Ответ уже принят.')
-                correct=choice==self.answer
-                r=game.quiz_reward(i.guild_id,i.user.id,correct)
-                self.done=True
-                for child in self.children: child.disabled=True
-                await i.response.edit_message(view=self)
-                await i.followup.send(**card('Угадал. Подозрительно.' if correct else 'Мимо. Гнидь доволен.',
-                    f'Верный ответ: **{self.answer}**\n{reward_text(r)}','victory' if correct else 'laugh'),ephemeral=True)
-                self.stop()
-            b.callback=callback
-            self.add_item(b)
-
-
 async def quiz_response(i):
-    game.cooldown(i.guild_id,i.user.id,'quiz',60)
-    question,options,answer=random.choice(QUIZ)
-    options=random.sample(options,len(options))
-    await send_view(i,QuizView(i.user.id,options,answer),
-                    **card('Викторина Гнидя',question+'\n\n45 секунд. Один ответ. За верный: 25 монеток и 15 опыта.','mage'),ephemeral=True)
+    await bot.features.personal(i,'quiz')
 
 
 class DuelView(SafeView):
@@ -247,7 +228,7 @@ class DuelView(SafeView):
                 labels=['камень','ножницы','бумага']
                 result=f'<@{self.a}>: {labels[x]} · <@{self.b}>: {labels[y]}\n'
                 if x==y:
-                    result+='Ничья. Гнидь присудил победу себе. Наград нет.'
+                    result+='Ничья. Мразик присудил победу себе. Наград нет.'
                 else:
                     winner,loser=(self.a,self.b) if (x-y)%3==2 else (self.b,self.a)
                     win_reward,lose_reward=game.duel_reward(i.guild_id,winner,loser)
@@ -294,6 +275,7 @@ class Gnid(commands.Bot):
                          tree_cls=Tree,allowed_mentions=discord.AllowedMentions.none(),help_command=None)
 
     async def setup_hook(self):
+        self.add_dynamic_items(EventButton)
         self.add_view(HomeView())
         self.add_view(PetView())
         gid=os.getenv('GUILD_ID','').strip()
@@ -304,9 +286,11 @@ class Gnid(commands.Bot):
         else:
             await self.tree.sync()
         self.daily_posts.start()
+        self.features.worker.start()
 
     async def close(self):
         self.daily_posts.cancel()
+        self.features.worker.cancel()
         await super().close()
         game.db.close()
 
@@ -318,7 +302,7 @@ class Gnid(commands.Bot):
             if not channel: continue
             if not game.claim_post(cfg['guild']): continue
             try:
-                await channel.send(**card('Гнидь принёс задание дня',
+                await channel.send(**card('Мразик принёс задание дня',
                     game.quest()+'\n\nСдать: /сдать. После одобрения модератора: 80 монеток и 40 опыта.','chef'))
             except discord.HTTPException:
                 # Keep the claim: an uncertain network delivery must not duplicate a post.
@@ -329,6 +313,8 @@ class Gnid(commands.Bot):
 
 
 bot=Gnid()
+bot.features=FeatureService(bot,game,card,allowed,respond_error)
+bot.features.install()
 
 
 async def daily_response(i):
@@ -345,17 +331,10 @@ async def quest_response(i):
 @bot.tree.command(name='помощь',description='Что умеет эта мразота')
 @app_commands.guild_only()
 async def help_command(i:discord.Interaction):
-    await i.response.send_message(**card('Добро пожаловать в Логово',
-        '**Начать:** /профиль · /ежедневно · /гнидь\n'
-        '**Игры:** /викторина · /дуэль · /экспедиция · /предсказание\n'
-        '**Коллекция:** /магазин · /гардероб · /одеть · /ранги · /альбом\n'
-        '**Компания:** /участие · /кто · /задание · /сдать · /топ\n'
-        '**Для модераторов:** /настройка · /панель · /заявки · /проверить\n\n'
-        'Все монетки игровые. За сообщения наград нет. Игровой лимит в день: 300 монеток и 200 XP; '
-        'подачка дня и одобренное задание начисляются отдельно.'),ephemeral=True)
+    await bot.features.help_response(i)
 
 
-@bot.tree.command(name='профиль',description='Монетки, ранг, достижения и твой образ Гнидя')
+@bot.tree.command(name='профиль',description='Монетки, ранг, достижения и твой образ Мразика')
 @app_commands.guild_only()
 async def profile_command(i:discord.Interaction):
     await i.response.send_message(**profile(i.guild_id,i.user.id),ephemeral=True)
@@ -366,7 +345,7 @@ async def profile_command(i:discord.Interaction):
 async def daily_command(i:discord.Interaction): await daily_response(i)
 
 
-@bot.tree.command(name='гнидь',description='Посмотреть на общего Гнидя, покормить и поиграть')
+@bot.tree.command(name='мразик',description='Посмотреть на общего Мразика, покормить и поиграть')
 @app_commands.guild_only()
 async def pet_command(i:discord.Interaction):
     await i.response.send_message(**pet_card(i.guild_id),view=PetView(),ephemeral=True)
@@ -386,7 +365,7 @@ async def wardrobe_command(i:discord.Interaction):
     await send_view(i,view,**card('Твои тряпки','\n'.join(OUTFITS[k]['name'] for k in owned)),ephemeral=True)
 
 
-@bot.tree.command(name='одеть',description='Надеть свой костюм на общего Гнидя; смена раз в 30 минут')
+@bot.tree.command(name='одеть',description='Надеть свой костюм на общего Мразика; смена раз в 30 минут')
 @app_commands.guild_only()
 async def dress_command(i:discord.Interaction):
     view=SafeView()
@@ -398,14 +377,14 @@ async def dress_command(i:discord.Interaction):
 @app_commands.guild_only()
 async def ranks_command(i:discord.Interaction):
     await i.response.send_message(**card('Лестница сомнительного успеха',
-        '\n'.join(f'**{name}** — {xp} XP' for xp,name in RANKS)+'\n\nРанг в игровом профиле. Костюмы покупаются отдельно.','king'),ephemeral=True)
+        '\n'.join(f'**{name}** — {xp} XP' for xp,name in RANKS)+'\n\nРанг зависит от личного опыта. Discord-роли включает модератор: /роли_настроить. Костюмы покупаются отдельно.','king'),ephemeral=True)
 
 
-ART_NAMES={**{k:v['name'] for k,v in OUTFITS.items()},'hungry':'Голодный Гнидь',
+ART_NAMES={**{k:v['name'] for k,v in OUTFITS.items()},'hungry':'Голодный Мразик',
            'sleep':'Спящая мразота','laugh':'Злорадство','victory':'Нечестная победа'}
 
 
-@bot.tree.command(name='альбом',description='Посмотреть все 11 картинок Гнидя, в том числе костюмы до покупки')
+@bot.tree.command(name='альбом',description='Посмотреть все 16 картинок Мразика, в том числе костюмы до покупки')
 @app_commands.guild_only()
 @app_commands.choices(образ=[app_commands.Choice(name=v,value=k) for k,v in ART_NAMES.items()])
 async def album_command(i:discord.Interaction,образ:app_commands.Choice[str]):
@@ -416,7 +395,7 @@ async def album_command(i:discord.Interaction,образ:app_commands.Choice[str
     await i.response.send_message(**card(ART_NAMES[key],description,key),ephemeral=True)
 
 
-@bot.tree.command(name='викторина',description='Один вопрос, четыре кнопки, 45 секунд')
+@bot.tree.command(name='викторина',description='Новый вопрос без повторов: 45 секунд, пауза 10 минут, до 3 вопросов в день')
 @app_commands.guild_only()
 async def quiz_command(i:discord.Interaction): await quiz_response(i)
 
@@ -432,18 +411,18 @@ async def duel_command(i:discord.Interaction,соперник:discord.Member):
                     **card('Дворовая дуэль','Соперник принимает вызов, затем оба тайно выбирают жест.','knight'))
 
 
-@bot.tree.command(name='экспедиция',description='Отправиться с Гнидем за сомнительным добром раз в 4 часа')
+@bot.tree.command(name='экспедиция',description='Отправиться с Мразиком за сомнительным добром раз в 4 часа')
 @app_commands.guild_only()
 async def expedition_command(i:discord.Interaction):
     event,r=game.expedition(i.guild_id,i.user.id)
     await i.response.send_message(**card('Вылазка на помойку',event+'\n'+reward_text(r),'hobo'),ephemeral=True)
 
 
-@bot.tree.command(name='предсказание',description='Сомнительная мудрость Гнидя')
+@bot.tree.command(name='предсказание',description='Сомнительная мудрость Мразика')
 @app_commands.guild_only()
 async def fortune_command(i:discord.Interaction):
     game.cooldown(i.guild_id,i.user.id,'fortune',60)
-    await i.response.send_message(**card('Гнидь видит твоё будущее',random.choice(FORTUNES),'mage'),ephemeral=True)
+    await i.response.send_message(**card('Мразик видит твоё будущее',random.choice(FORTUNES),'mage'),ephemeral=True)
 
 
 @bot.tree.command(name='участие',description='Добровольно вступить в розыгрыш шуточных званий или выйти')
@@ -543,16 +522,26 @@ async def setup_command(i:discord.Interaction,канал:discord.TextChannel,ч�
     await i.response.send_message(f'Игровой канал: {канал.mention}. Автопост: {автопост}, час {час}:00 ({game.tz}).\nТеперь отправь /панель в игровом канале.',ephemeral=True)
 
 
-@bot.tree.command(name='панель',description='Опубликовать главную панель Гнидя в игровом канале')
+@bot.tree.command(name='панель',description='Опубликовать главную панель Мразика в игровом канале')
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.checks.has_permissions(manage_guild=True)
 async def panel_command(i:discord.Interaction):
     if not await allowed(i): return
     await i.response.send_message(**card('Мразотное Логово',
-        'Я Гнидь. Живу тут, жру тут, осуждаю тоже тут.\n\n'
+        'Я Мразик. Живу тут, жру тут, осуждаю тоже тут.\n\n'
         'Копи монетки, собирай тряпки, вызывай друзей на дуэли. Кнопки ниже — твой вход в Логово.\n'
         'Все команды: /помощь.'),view=HomeView())
+
+
+@bot.event
+async def on_ready():
+    # Server nickname only: never replace the user's token or application settings.
+    for guild in bot.guilds:
+        if guild.me and guild.me.display_name != 'Мразик':
+            try: await guild.me.edit(nick='Мразик',reason='Имя персонажа версии 2')
+            except discord.HTTPException:
+                log.warning('Cannot set nickname in guild %s; set Мразик manually',guild.id)
 
 
 if __name__=='__main__':
