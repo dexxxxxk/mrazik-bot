@@ -55,8 +55,10 @@ class Roaming:
     async def channels(self,guild):
         # Refresh overwrites through REST; failures are reported instead of silently skipping.
         member=guild.me or await guild.fetch_member(self.bot.user.id)
+        configured=self.game.settings(guild.id)
+        if not configured:raise GameError('Сначала выбери игровой канал через /настройка.')
         channels=await guild.fetch_channels()
-        return [(c,channel_reason(c,guild,member)) for c in channels if isinstance(c,discord.TextChannel)]
+        return [(c,channel_reason(c,guild,member)) for c in channels if isinstance(c,discord.TextChannel) and c.id==configured['channel']]
 
     def create_event(self,g,ch,variant):
         if variant=='drop':return self.game.create_loot_drop(g,ch)
@@ -91,9 +93,8 @@ class Roaming:
                 if any(e['kind']=='drop' or json.loads(e['payload']).get('public_any') for e in active):
                     return 'Уже идёт случайное событие. Дождись окончания его пяти минут.'
                 candidates=[c for c,reason in await self.channels(guild) if not reason]
-                if not candidates:raise GameError('Нет открытых текстовых каналов с нужными правами. Подробности: /автопост_статус.')
-                alternatives=[c for c in candidates if c.id!=cfg['last_channel']]
-                channel=random.choice(alternatives or candidates)
+                if not candidates:raise GameError('Выбранный игровой канал недоступен или не хватает прав. В другие каналы отправки не будет. Подробности: /автопост_статус.')
+                channel=candidates[0]
                 variant=random.choice([v for v in ['drop','rescue','parcel','caravan'] if v!=cfg['last_kind']])
                 art={'drop':'pharaoh','rescue':'detective','parcel':'postman','caravan':'cowboy'}[variant]
                 if not (Path(__file__).parent/'assets'/f'{art}.png').is_file():
@@ -132,7 +133,9 @@ class Roaming:
                f"Следующая попытка: <t:{int(cfg['next_at'])}:R>." if cfg['enabled'] else 'Расписание приостановлено.',
                f"Планировщик: {'работает' if self.worker.is_running() else 'не запущен — проверь логи и версию бота'}."
                ]
-        if not self.game.settings(i.guild_id):lines.append('Сначала выбери игровой канал через /настройка.')
+        selected=self.game.settings(i.guild_id)
+        if not selected:lines.append('Сначала выбери игровой канал через /настройка.')
+        else:lines.append(f"Единственный канал автопостов: <#{selected['channel']}>. Другие каналы не используются.")
         if cfg['last_success']:lines.append(f"Последняя отправка: <t:{int(cfg['last_success'])}:f> в <#{cfg['last_channel']}>. Событие удаляется через 5 минут.")
         missing=[name for name in ['pharaoh','detective','postman','cowboy'] if not (Path(__file__).parent/'assets'/f'{name}.png').is_file()]
         if missing:lines.append('Не хватает картинок в assets: '+', '.join(missing))
@@ -146,7 +149,7 @@ class Roaming:
         await i.followup.send(embed=discord.Embed(title='Проверка случайных автопостов',description='\n'.join(lines)[:4000]),ephemeral=True)
 
     def install(self):
-        @self.bot.tree.command(name='автопосты',description='Случайные события с картинками в открытых каналах: включение и интервал')
+        @self.bot.tree.command(name='автопосты',description='События с картинками только в игровом канале: включение и интервал')
         @app_commands.guild_only()
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)
@@ -154,7 +157,7 @@ class Roaming:
             await i.response.defer(ephemeral=True)
             if not self.game.settings(i.guild_id):raise GameError('Сначала /настройка — выбери игровой канал.')
             self.configure(i.guild_id,включить,минут_от,минут_до)
-            await i.followup.send('Включено. Первая попытка через минуту, далее случайный интервал. Проверка: /автопост_статус. Отправить сейчас: /автопост_сейчас.' if включить else 'Случайные автопосты выключены.',ephemeral=True)
+            await i.followup.send('Включено только в игровом канале из /настройка. Первая попытка через минуту, далее случайный интервал. Проверка: /автопост_статус. Отправить сейчас: /автопост_сейчас.' if включить else 'Случайные автопосты выключены.',ephemeral=True)
         @self.bot.tree.command(name='автопост_статус',description='Проверить расписание, права каналов и последнюю ошибку автопостов')
         @app_commands.guild_only()
         @app_commands.default_permissions(manage_guild=True)

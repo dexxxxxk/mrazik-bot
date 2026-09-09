@@ -14,7 +14,7 @@ class RoamingTests(unittest.IsolatedAsyncioTestCase):
         self.game=Game(self.path,clock=lambda:self.now);self.game.configure(1,100,12,False)
         self.guild=NS(id=1,me=object(),default_role=object())
         self.channels=[]
-        for n in [101,102]:
+        for n in [100,102]:
             c=Mock(spec=discord.TextChannel);c.id=n;c.name=f'open{n}'
             c.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=True,attach_files=True)
             self.channels.append(c)
@@ -26,7 +26,7 @@ class RoamingTests(unittest.IsolatedAsyncioTestCase):
         self.service.publish=AsyncMock(side_effect=publish)
         self.roaming=Roaming(self.bot,self.game)
     async def asyncTearDown(self):self.game.db.close();self.tmp.cleanup()
-    async def test_enable_sends_after_minute_rotates_and_persists_schedule(self):
+    async def test_enable_sends_only_configured_channel_and_persists_schedule(self):
         self.roaming.configure(1,True,60,120)
         await self.roaming.send(self.guild);self.service.publish.assert_not_awaited()
         self.now+=61;await self.roaming.send(self.guild)
@@ -35,13 +35,13 @@ class RoamingTests(unittest.IsolatedAsyncioTestCase):
         await self.roaming.send(self.guild);self.assertEqual(self.service.publish.await_count,1)
         self.now=first['next_at'];await self.roaming.send(self.guild)
         second=self.roaming.state(1)
-        self.assertNotEqual(first['last_channel'],second['last_channel']);self.assertNotEqual(first['last_kind'],second['last_kind'])
+        self.assertEqual(first['last_channel'],100);self.assertEqual(second['last_channel'],100);self.assertNotEqual(first['last_kind'],second['last_kind'])
         self.game.db.close();self.game=Game(self.path,clock=lambda:self.now);self.roaming=Roaming(self.bot,self.game)
         self.assertEqual(self.roaming.state(1)['next_at'],second['next_at'])
     async def test_no_channels_and_send_failure_visible_and_retry(self):
         self.roaming.configure(1,True,60,120);self.guild.fetch_channels.return_value=[]
         with self.assertRaises(GameError):await self.roaming.send(self.guild,True)
-        self.assertIn('Нет открытых',self.roaming.state(1)['error'])
+        self.assertIn('Выбранный игровой канал',self.roaming.state(1)['error'])
         self.assertEqual(self.roaming.state(1)['next_at'],self.now+300)
         self.guild.fetch_channels.return_value=self.channels;self.now+=301
         self.service.publish.side_effect=RuntimeError('send failed')
@@ -81,3 +81,15 @@ class RoamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.game.user(1,10)['coins'],700)
         self.assertFalse(self.roaming.state(1)['enabled'])
         self.assertEqual(self.roaming.state(1)['min_minutes'],30)
+
+    async def test_no_fallback_to_other_channel_when_selected_is_missing(self):
+        self.roaming.configure(1,True,60,120)
+        self.guild.fetch_channels.return_value=[self.channels[1]]
+        with self.assertRaises(GameError):await self.roaming.send(self.guild,True)
+        self.service.publish.assert_not_awaited()
+
+    async def test_changing_game_channel_changes_next_destination(self):
+        self.roaming.configure(1,True,60,120)
+        self.game.configure(1,102,12,False)
+        await self.roaming.send(self.guild,True)
+        self.assertEqual(self.service.publish.call_args.args[0].id,102)

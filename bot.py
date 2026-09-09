@@ -649,7 +649,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 4.2.1: command sync diagnostics + autopost panel buttons')
+    log.info('Mrazik build 4.3: autoposts only in configured game channel')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)
