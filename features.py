@@ -120,14 +120,17 @@ class FeatureService:
     def event_card(self,e):
         p=e['payload']
         text=p['text']+f"\n\nКонец: <t:{int(e['expires'])}:R>. Одна попытка на участника."
-        if e['kind']=='quiz' and e['owner']: text+='\nБез повторов, до 3 вопросов в день. Открытие уже расходует вопрос; пауза 10 минут.'
-        if e['kind']=='quiz' and not e['owner']: text+='\nЕсли ты уже открывал этот вопрос лично, повторной награды нет.'
-        if e['kind']=='fish': text+=f"\n🎣 Подсекать: <t:{int(e['starts'])}:T> (<t:{int(e['starts'])}:R>)."
-        if e['kind']=='chests': text+='\nВнутри 10, 30 или 60 монеток и 12 опыта.'
-        elif e['kind']=='quiz' and e['owner']: text+='\nБез повторов, до 3 вопросов в день. Открытие уже расходует вопрос; пауза 10 минут.'
-        if e['kind']=='quiz' and not e['owner']: text+='\nЕсли ты уже открывал этот вопрос лично, повторной награды нет.'
-        if e['kind']=='fish': text+='\nЗа улов: 10–50 монеток и 15 опыта.'
-        else: text+=f"\nНаграда: {p['coins']} монеток и {p['xp']} опыта."
+        if e['kind']=='quiz':
+            text+=('\nБез повторов, до 3 вопросов в день. Открытие уже расходует вопрос; пауза 10 минут.'
+                   if e['owner'] else '\nЕсли ты уже открывал этот вопрос лично, повторной награды нет.')
+        if e['kind']=='chests':
+            amounts=', '.join(str(n) for n in sorted(p['amounts']))
+            text+=f"\nВнутри {amounts} монеток на выбор и {p['xp']} опыта."
+        elif e['kind']=='fish':
+            text+=f"\n🎣 Подсекать: <t:{int(e['starts'])}:T> (<t:{int(e['starts'])}:R>)."
+            text+=f"\nЗа улов: 10–50 монеток и {p['xp']} опыта."
+        else:
+            text+=f"\nНаграда: {p['coins']} монеток и {p['xp']} опыта."
         text+='\nНаграды учитывают дневной игровой лимит.'
         return self.card(p['title'],text,p['art'])
 
