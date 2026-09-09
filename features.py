@@ -11,8 +11,8 @@ from logovo_content import LOGOVO_STORIES
 from game import GameError
 
 log = logging.getLogger('mrazik.features')
-ADMIN = {'настройка','панель','заявки','проверить','роли_настроить','автороли','события','событие'}
-GAMES = {'викторина','дуэль','экспедиция','предсказание','сундуки','угадай','рыбалка'}
+ADMIN = {'настройка','панель','заявки','проверить','роли_настроить','автороли','события','событие','сундук_события'}
+GAMES = {'викторина','дуэль','экспедиция','предсказание','сундуки','угадай','рыбалка','лабиринт'}
 
 
 class TextDestination(app_commands.Transformer):
@@ -69,20 +69,25 @@ class EventButton(discord.ui.DynamicItem[discord.ui.Button], template=r'mrazik:e
     async def callback(self,i):
         service=i.client.features
         try:
-            if not await service.allowed(i): return
+            e=service.game.event(self.eid)
+            if not await service.allowed(i,e['kind']=='drop'):return
             await i.response.defer(ephemeral=True)
+            if e['kind']=='drop':
+                service.game.collect_drop(i.guild_id,i.user.id,i.channel_id,i.message.id,self.eid)
+                embed,view=i.client.expansion.bag(i.guild_id,i.user.id,'Сундук добавлен! Можно открыть сейчас или сохранить на потом.')
+                return await i.followup.send(embed=embed,view=view,ephemeral=True)
             r,correct,phrase=service.game.answer_activity(i.guild_id,i.user.id,i.channel_id,i.message.id,self.eid,self.choice)
             e=service.game.event(self.eid)
             if e['owner'] and e['kind']=='quiz':
-                p=e['payload']; phrase+=f"\nВерный ответ: **{p['options'][p['answer']]}**."
-            if e['owner']:
-                try: await i.edit_original_response(view=service.event_view(e,True))
-                except discord.HTTPException: pass
-            if correct:
-                phrase+=service.limit_notice(i.guild_id,i.user.id,r)
-            await i.followup.send(f'{phrase}\n+{r[0]} монеток · +{r[1]} опыта',ephemeral=True)
-        except Exception as error:
-            await service.respond_error(i,error)
+                p=e['payload'];phrase+=f"\nВерный ответ: **{p['options'][p['answer']]}**."
+            if correct and not e['payload'].get('uncapped'):phrase+=service.limit_notice(i.guild_id,i.user.id,r)
+            if e['payload'].get('uncapped'):phrase+='\nНаграда автопоста — сверх дневного лимита.'
+            from expansion import NavButton
+            view=discord.ui.View(timeout=None);view.add_item(NavButton())
+            embed=discord.Embed(title='Результат игры',description=f'{phrase}\n+{r[0]} монеток · +{r[1]} опыта',color=0x9BA95B)
+            if e['owner']:await i.edit_original_response(embed=embed,view=view,attachments=[])
+            else:await i.followup.send(embed=embed,view=view,ephemeral=True)
+        except Exception as error:await service.respond_error(i,error)
 
 
 class FeatureService:
@@ -119,7 +124,7 @@ class FeatureService:
             f"Монеты: {limits['coins']}/300 · осталось **{limits['coins_left']}**.\n"
             f"Опыт: {limits['xp']}/200 · осталось **{limits['xp_left']}**.\n"
             f"Лимиты обновятся <t:{limits['reset']}:R>. Покупки не восстанавливают лимит заработка.\n\n"
-            'Ежедневная подачка и одобренные творческие работы — сверх лимита. '
+            'Автопосты, сундуки из инвентаря, ежедневная подачка и одобренные работы — сверх лимита. '
             'Открытие /задание и отправка /сдать ещё не дают награду: нужно одобрение другого модератора через /проверить.')
         rows=self.game.db.execute('SELECT id,day,status FROM submissions WHERE guild=? AND uid=? ORDER BY id DESC LIMIT 5',(g,u)).fetchall()
         status={'pending':'ожидает проверки — пока без награды','approved':'одобрена — начислено 80 монет и 40 XP','rejected':'отклонена — без награды'}
@@ -128,7 +133,7 @@ class FeatureService:
         return embed
 
     def help_embed(self,category='start'):
-        collection={'магазин','гардероб','одеть','ранги','альбом','роль'}
+        collection={'магазин','гардероб','одеть','ранги','альбом','роль','инвентарь'}
         social={'участие','кто','задание','сдать','топ','байка','награды'}
         groups={'games':GAMES,'collection':collection,'social':social,'admin':ADMIN}
         names=groups.get(category)
@@ -137,7 +142,7 @@ class FeatureService:
         else: commands=[c for c in commands if c.name in names]
         embed=discord.Embed(title='📖 Все команды Мразика',color=0x9BA95B,
             description='Выбери раздел в меню ниже. Все монетки игровые.\n'
-                        'Игровой лимит за день: 300 монеток и 200 опыта. Подачка и одобренное задание — отдельно.')
+                        'Игровой лимит за день: 300 монеток и 200 опыта. Автопосты, сундуки из инвентаря, подачка и одобренное задание — сверх лимита.')
         for cmd in commands:
             params=' '.join(f'<{p.display_name}>' if p.required else f'[{p.display_name}]' for p in cmd.parameters)
             embed.add_field(name=f'/{cmd.name} {params}'.strip(),value=cmd.description,inline=False)
@@ -147,12 +152,16 @@ class FeatureService:
     async def help_response(self,i,category='start'):
         view=discord.ui.View(timeout=180)
         view.add_item(CommandSelect(self))
+        from expansion import NavButton
+        view.add_item(NavButton())
         await i.response.send_message(embed=self.help_embed(category),view=view,ephemeral=True)
 
     def event_view(self,e,closed=False):
         view=discord.ui.View(timeout=None)
         for n,label in enumerate(e['payload']['options']):
             view.add_item(EventButton(e['id'],n,label,closed))
+        from expansion import NavButton
+        view.add_item(NavButton())
         return view
 
     def event_card(self,e):
@@ -161,7 +170,9 @@ class FeatureService:
         if e['kind']=='quiz':
             text+=('\nБез повторов, до 3 вопросов в день. Открытие уже расходует вопрос; пауза 10 минут.'
                    if e['owner'] else '\nЕсли ты уже открывал этот вопрос лично, повторной награды нет.')
-        if e['kind']=='chests':
+        if e['kind']=='drop':
+            text+='\n20% — редкая одежда, 80% — опыт и монеты. Сундук хранится в /инвентарь. Без дневного лимита.'
+        elif e['kind']=='chests':
             amounts=', '.join(str(n) for n in sorted(p['amounts']))
             text+=f"\nВнутри {amounts} монеток на выбор и {p['xp']} опыта."
         elif e['kind']=='fish':
@@ -169,7 +180,7 @@ class FeatureService:
             text+=f"\nЗа улов: 10–50 монеток и {p['xp']} опыта."
         else:
             text+=f"\nНаграда: {p['coins']} монеток и {p['xp']} опыта."
-        text+='\nНаграды учитывают дневной игровой лимит.'
+        text+=('\nНаграды автопоста не ограничены дневным лимитом.' if p.get('uncapped') else '\nНаграды учитывают дневной игровой лимит.')
         return self.card(p['title'],text,p['art'])
 
     async def publish(self,channel,e):
@@ -182,10 +193,16 @@ class FeatureService:
             raise
 
     async def personal(self,i,kind):
+        private=bool(getattr(i,'message',None) and i.message.flags.ephemeral)
         await i.response.defer(ephemeral=True)
         e=self.game.start_activity(i.guild_id,i.user.id,i.channel_id,kind)
         try:
-            message=await i.followup.send(**self.event_card(e),view=self.event_view(e),ephemeral=True,wait=True)
+            kwargs=self.event_card(e)
+            if private:
+                attachment=kwargs.pop('file',None)
+                message=await i.edit_original_response(**kwargs,view=self.event_view(e),attachments=[attachment] if attachment else [],content=None)
+            else:
+                message=await i.followup.send(**kwargs,view=self.event_view(e),ephemeral=True,wait=True)
             self.game.open_event(e['id'],message.id)
         except Exception:
             self.game.fail_event(e['id'])
@@ -256,18 +273,17 @@ class FeatureService:
                 except discord.HTTPException: log.warning('Event delivery failed in guild %s',cfg['guild'])
         closed=self.game.db.execute("SELECT id FROM events WHERE state='closed' AND owner=0 AND summary_done=0 LIMIT 10").fetchall()
         for row in closed:
-            e=self.game.event(row['id']); channel=self.bot.get_channel(e['channel'])
+            e=self.game.event(row['id'])
+            try:channel=await resolve_text_channel(self.bot,e['guild'],e['channel'])
+            except GameError:continue
             if channel and e['message']:
                 try:
-                    total,correct=self.game.event_stats(e['id']); p=e['payload']
-                    text=f'Событие завершено. Участников: {total}. Успешных попыток: {correct}.'
-                    if e['kind'] in ('quiz','target'): text+=f"\nВерный ответ: **{p['options'][p['answer']]}**."
-                    embed=discord.Embed(title=p['title'],description=text,color=0x9BA95B)
-                    await channel.get_partial_message(e['message']).edit(embed=embed,view=self.event_view(e,True))
+                    await channel.get_partial_message(e['message']).delete()
                 except discord.NotFound: pass
                 except discord.Forbidden: log.warning('Cannot close event message %s',e['id'])
                 except discord.HTTPException: continue
             self.game.db.execute('UPDATE events SET summary_done=1 WHERE id=?',(e['id'],))
+        await self.bot.expansion.tick_drops()
         queue=self.game.db.execute('''SELECT q.* FROM role_queue q JOIN role_settings s ON s.guild=q.guild
             WHERE s.enabled=1 AND q.retry_at<=? ORDER BY q.retry_at LIMIT 10''',(self.game.clock(),)).fetchall()
         for row in queue:

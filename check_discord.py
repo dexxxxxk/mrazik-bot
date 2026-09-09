@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 import discord
 
 
@@ -31,7 +31,7 @@ async def check():
         channel.id=333;channel.guild=SimpleNamespace(id=1);channel.mention='<#333>'
         channel.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=True,attach_files=True,read_message_history=True)
         client=SimpleNamespace(get_channel=Mock(return_value=None),fetch_channel=AsyncMock(return_value=channel))
-        setup_i=SimpleNamespace(guild_id=1,guild=SimpleNamespace(me=object()),client=client,
+        setup_i=SimpleNamespace(created_at=discord.utils.utcnow(),guild_id=1,guild=SimpleNamespace(me=object()),client=client,
             response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
         await bot.setup_command.callback(setup_i,SimpleNamespace(id=333),15,True)
         assert bot.game.settings(1)['channel']==333
@@ -43,6 +43,25 @@ async def check():
             raise AssertionError('Missing channel permissions must reject configuration')
         except bot.GameError: pass
         assert bot.game.settings(1)['hour']==15
+        with patch.object(bot.game,'settings',side_effect=AssertionError('No DB before admin ACK')):
+            assert await bot.allowed(SimpleNamespace(guild_id=1),True)
+        expired=discord.NotFound(SimpleNamespace(status=404,reason='Not Found'),{'code':10062,'message':'Unknown interaction'})
+        setup_i.command=SimpleNamespace(name='настройка');client.latency=0.1
+        setup_i.response.defer=AsyncMock(side_effect=expired)
+        state_before=bot.game.settings(1)
+        try:
+            await bot.setup_command.callback(setup_i,SimpleNamespace(id=333),17,False)
+            raise AssertionError('Expired ACK must stop setup')
+        except discord.NotFound:pass
+        assert bot.game.settings(1)==state_before
+        setup_i.response.send_message=AsyncMock()
+        sent_before=setup_i.followup.send.await_count
+        await bot.respond_error(setup_i,expired)
+        setup_i.response.send_message.assert_not_awaited()
+        assert setup_i.followup.send.await_count==sent_before
+        setup_i.response.is_done=Mock(return_value=False)
+        setup_i.response.send_message.side_effect=expired
+        await bot.respond_error(setup_i,bot.GameError('Test expired error notification'))
         option=next(o for o in bot.setup_command.to_dict(bot.bot.tree)['options'] if o['name']=='канал')
         assert option['type']==7 and set(option['channel_types'])=={0,5}
         assert bot.bot.intents.guilds
@@ -50,7 +69,7 @@ async def check():
         assert bot.HomeView().is_persistent()
         assert bot.PetView().is_persistent()
         cmds=bot.bot.tree.get_commands()
-        assert len(cmds)==31, len(cmds)
+        assert len(cmds)==35, len(cmds)
         assert {'мразик','сундуки','угадай','рыбалка','роли_настроить','роль','события','событие'} <= {c.name for c in cmds}
         assert 'гнидь' not in {c.name for c in cmds}
         for cmd in cmds:
@@ -68,10 +87,22 @@ async def check():
             catalogue.extend(f.name.split()[0][1:] for f in bot.bot.features.help_embed(category).fields)
         assert set(catalogue)=={c.name for c in cmds}
         assert len(catalogue)==len(cmds)
+        bot.game.user(1,777)
+        for key in bot.OUTFITS:bot.game.db.execute('INSERT OR IGNORE INTO owned VALUES(?,?,?)',(1,777,key))
+        menu_i=SimpleNamespace(guild_id=1,user=SimpleNamespace(id=777),message=None,
+            response=SimpleNamespace(send_message=AsyncMock()),original_response=AsyncMock())
+        for command in [bot.wardrobe_command,bot.dress_command]:
+            await command.callback(menu_i)
+            payload=menu_i.response.send_message.call_args.kwargs
+            menus=[c for c in payload['view'].children if isinstance(c,discord.ui.Select)]
+            assert len(menus)==2 and all(len(m.options)<=25 for m in menus)
+            assert {o.value for m in menus for o in m.options}==set(bot.OUTFITS)
+            payload['file'].close();payload['view'].stop()
+        assert any(c.value=='storm' for c in await bot.album_autocomplete(menu_i,'ворчания'))
         view=bot.DuelView(1,2)
-        assert len(view.children)==5
+        assert len(view.children)==6
         view.stop()
-        print(f'OK: {len(cmds)} slash commands, persistent views, channel isolation, personal pet cards, 16 PNG assets; no network connection.')
+        print(f'OK: {len(cmds)} slash commands, persistent views, channel isolation, personal pet cards, 36 PNG assets; no network connection.')
         bot.game.db.close()
 
 

@@ -119,7 +119,10 @@ class ActivitiesMixin:
                                    (g,self.clock())).fetchone()
             if active: return None
             kinds=['stash','target']+(['quiz'] if self.available_questions(g) else [])
-            return self._create_event(g,channel,random.choice(kinds))
+            event=self._create_event(g,channel,random.choice(kinds))
+            event['payload']['uncapped']=True
+            self.db.execute('UPDATE events SET payload=? WHERE id=?',(json.dumps(event['payload'],ensure_ascii=False),event['id']))
+            return event
 
     def start_activity(self,g,u,channel,kind,public=False):
         with self.tx():
@@ -170,7 +173,7 @@ class ActivitiesMixin:
             if e['kind']=='quiz' and correct:
                 self.user(g,u)
                 self.db.execute('UPDATE users SET correct=correct+1 WHERE guild=? AND uid=?',(g,u))
-            reward=self._reward(g,u,coins,xp)
+            reward=self._reward(g,u,coins,xp,not p.get('uncapped',False))
             self.db.execute('INSERT INTO event_claims VALUES(?,?,?,?,?)',(eid,u,int(correct),*reward))
             if e['owner']: self.db.execute("UPDATE events SET state='closed',summary_done=1 WHERE id=?",(eid,))
             if e['kind']=='chests': phrase=f'В сундуке оказалось {coins} монеток.'

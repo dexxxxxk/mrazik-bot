@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from content import OUTFITS, RANKS, QUIZ, FORTUNES, badges, rank
 from game import Game, GameError
 from features import FeatureService, EventButton, resolve_text_channel, TextDestination
+from expansion import Expansion, NavButton, OpenChest, MazeMove
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
@@ -79,7 +80,7 @@ async def allowed(i, bypass_channel=False):
 
 class Tree(app_commands.CommandTree):
     async def interaction_check(self, i):
-        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль'}
+        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль','инвентарь','сундук_события'}
         return await allowed(i, bypass)
 
     async def on_error(self, i, error):
@@ -90,16 +91,19 @@ class SafeView(discord.ui.View):
     def __init__(self, *, timeout=120):
         super().__init__(timeout=timeout)
         self.message = None
+        self.add_item(NavButton())
 
     async def interaction_check(self, i):
-        return await allowed(i)
+        custom=(i.data or {}).get("custom_id", "")
+        bypass=custom.startswith("mrazik:nav:") or custom in {"mrazik:bag:home","mrazik:help:v2","mrazik:games:v2"}
+        return await allowed(i,bypass)
 
     async def on_error(self, i, error, item):
         await respond_error(i,error)
 
     async def on_timeout(self):
         for child in self.children:
-            child.disabled = True
+            if not isinstance(child,NavButton):child.disabled = True
         if self.message:
             try:
                 await self.message.edit(view=self)
@@ -107,8 +111,23 @@ class SafeView(discord.ui.View):
                 pass
 
 
+async def send_card(i, **kwargs):
+    if kwargs.get('ephemeral'):
+        if 'view' not in kwargs:
+            view=discord.ui.View(timeout=None);view.add_item(NavButton());kwargs['view']=view
+        if getattr(i,'message',None) and i.message.flags.ephemeral:
+            kwargs.pop('ephemeral')
+            attachment=kwargs.pop('file',None)
+            return await i.response.edit_message(attachments=[attachment] if attachment else [],content=None,**kwargs)
+    return await i.response.send_message(**kwargs)
+
+
 async def send_view(i, view, **kwargs):
-    await i.response.send_message(view=view, **kwargs)
+    if getattr(i,'message',None) and i.message.flags.ephemeral:
+        kwargs.pop('ephemeral',None)
+        attachment=kwargs.pop('file',None)
+        await i.response.edit_message(view=view,attachments=[attachment] if attachment else [],**kwargs)
+    else:await i.response.send_message(view=view, **kwargs)
     view.message = await i.original_response()
 
 
@@ -143,7 +162,7 @@ class PetView(SafeView):
         phrases={'feed':'Сожрал. На повара пожаловался.','play':'Поиграл. Объявил себя победителем.',
                  'sleep':'Захрапел. Логово выдохнуло.'}
         art={'feed':'chef','play':'laugh','sleep':'sleep'}[action]
-        await i.response.send_message(**card(phrases[action],reward_text(r),art),ephemeral=True)
+        await send_card(i,**card(phrases[action],reward_text(r),art),ephemeral=True)
 
     @discord.ui.button(label='Покормить',emoji='🥣',custom_id='gnid:feed:v1',style=discord.ButtonStyle.success)
     async def feed(self,i,button): await self.care(i,'feed')
@@ -156,7 +175,7 @@ class PetView(SafeView):
 
     @discord.ui.button(label='Обновить состояние',custom_id='gnid:refresh:v1',row=1)
     async def refresh(self,i,button):
-        await i.response.send_message(**pet_card(i.guild_id,i.user.id),ephemeral=True)
+        await send_card(i,**pet_card(i.guild_id,i.user.id),ephemeral=True)
 
 
 class HomeView(SafeView):
@@ -164,14 +183,14 @@ class HomeView(SafeView):
 
     @discord.ui.button(label='Мой профиль',emoji='🪪',custom_id='gnid:profile:v1')
     async def me(self,i,button):
-        await i.response.send_message(**profile(i.guild_id,i.user.id),ephemeral=True)
+        await send_card(i,**profile(i.guild_id,i.user.id),ephemeral=True)
 
     @discord.ui.button(label='Подачка дня',emoji='🪙',custom_id='gnid:daily:v1',style=discord.ButtonStyle.success)
     async def daily(self,i,button): await daily_response(i)
 
     @discord.ui.button(label='Мой Мразик',emoji='🐾',custom_id='gnid:pet:v1')
     async def pet(self,i,button):
-        await i.response.send_message(**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
+        await send_card(i,**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
 
     @discord.ui.button(label='Магазин',emoji='👕',custom_id='gnid:shop:v1',row=1)
     async def shop(self,i,button): await shop_response(i)
@@ -182,19 +201,25 @@ class HomeView(SafeView):
     @discord.ui.button(label='Задание дня',emoji='🎯',custom_id='gnid:quest:v1',row=1)
     async def quest(self,i,button): await quest_response(i)
 
+    @discord.ui.button(label='Инвентарь',emoji='🎒',custom_id='mrazik:bag:home',row=2)
+    async def bag_button(self,i,button):await bot.expansion.navigate(i,'bag')
+
+    @discord.ui.button(label='Лабиринт',emoji='🧩',custom_id='mrazik:maze:home',row=2)
+    async def maze_button(self,i,button):await bot.expansion.navigate(i,'maze')
+
     @discord.ui.button(label='Все команды',emoji='📖',custom_id='mrazik:help:v2',row=2)
     async def help_button(self,i,button): await bot.features.help_response(i)
 
     @discord.ui.button(label='Больше игр',emoji='🎮',custom_id='mrazik:games:v2',row=2)
-    async def games_button(self,i,button): await bot.features.help_response(i,'games')
+    async def games_button(self,i,button): await bot.expansion.navigate(i,'games')
 
 
 class OutfitSelect(discord.ui.Select):
-    def __init__(self, owner, mode, items):
+    def __init__(self, owner, mode, items, page=1):
         self.owner,self.mode=owner,mode
         options=[discord.SelectOption(label=OUTFITS[k]['name'],value=k,
-                   description=f"{OUTFITS[k]['price']} монеток • от {OUTFITS[k]['xp']} опыта") for k in items]
-        super().__init__(placeholder='Выбери тряпьё',options=options)
+                   description=("Редкий образ из сундука" if OUTFITS[k].get("rare") else f"{OUTFITS[k]['price']} монеток • от {OUTFITS[k]['xp']} опыта")) for k in items]
+        super().__init__(placeholder=f'Выбери образ • меню {page}',options=options)
 
     async def callback(self,i):
         if i.user.id!=self.owner:
@@ -206,14 +231,14 @@ class OutfitSelect(discord.ui.Select):
         else:
             game.equip(i.guild_id,i.user.id,key)
             text='Мразик нарядился. И немедленно заважничал.'
-        await i.response.send_message(**card(OUTFITS[key]['name'],text,key),ephemeral=True)
+        await send_card(i,**card(OUTFITS[key]['name'],text,key),ephemeral=True)
 
 
 async def shop_response(i):
-    body='\n'.join(f"**{v['name']}** — {v['price']} 🪙 · от {v['xp']} XP" for k,v in OUTFITS.items() if k!='base')
+    body='\n'.join(f"**{v['name']}** — {v['price']} 🪙 · от {v['xp']} XP" for k,v in OUTFITS.items() if k!='base' and not v.get('rare'))
     body+='\n\nВыбор в меню сразу покупает костюм за игровые монетки. Вещи навсегда; бонусов к победе нет.'
     view=SafeView()
-    view.add_item(OutfitSelect(i.user.id,'buy',[k for k in OUTFITS if k!='base']))
+    view.add_item(OutfitSelect(i.user.id,'buy',[k for k,v in OUTFITS.items() if k!='base' and not v.get('rare')]))
     await send_view(i,view,**card('Лавка подозрительного тряпья',body,'gopnik'),ephemeral=True)
 
 
@@ -247,7 +272,8 @@ class DuelView(SafeView):
                     winner,loser=(self.a,self.b) if (x-y)%3==2 else (self.b,self.a)
                     win_reward,lose_reward=game.duel_reward(i.guild_id,winner,loser)
                     result+=f'Победил <@{winner}>: {reward_text(win_reward)}\nСопернику: {reward_text(lose_reward)}'
-                for child in self.children: child.disabled=True
+                for child in self.children:
+                    if not isinstance(child,NavButton):child.disabled=True
                 await i.response.edit_message(content=result,view=self)
                 self.stop()
             button.callback=choose
@@ -269,7 +295,8 @@ class DuelView(SafeView):
         if i.user.id not in (self.a,self.b): raise GameError('Это чужой вызов.')
         if self.accepted: raise GameError('Игра уже началась. Сделай выбор или дождись тайм-аута.')
         self.done=True
-        for child in self.children: child.disabled=True
+        for child in self.children:
+            if not isinstance(child,NavButton):child.disabled=True
         await i.response.edit_message(content='Дуэль отменена. Никто ничего не потерял.',view=self)
         self.stop()
 
@@ -289,7 +316,7 @@ class Gnid(commands.Bot):
                          tree_cls=Tree,allowed_mentions=discord.AllowedMentions.none(),help_command=None)
 
     async def setup_hook(self):
-        self.add_dynamic_items(EventButton)
+        self.add_dynamic_items(EventButton,NavButton,OpenChest,MazeMove)
         self.add_view(HomeView())
         self.add_view(PetView())
         gid=os.getenv('GUILD_ID','').strip()
@@ -331,16 +358,18 @@ class Gnid(commands.Bot):
 bot=Gnid()
 bot.features=FeatureService(bot,game,card,allowed,respond_error)
 bot.features.install()
+bot.expansion=Expansion(bot,game,HomeView)
+bot.expansion.install()
 
 
 async def daily_response(i):
     r,streak=game.daily(i.guild_id,i.user.id)
-    await i.response.send_message(**card('Держи. И не привыкай.',
+    await send_card(i,**card('Держи. И не привыкай.',
         f'{reward_text(r)}\nСерия визитов: {streak} дн.','victory'),ephemeral=True)
 
 
 async def quest_response(i):
-    await i.response.send_message(**card('Задание дня',
+    await send_card(i,**card('Задание дня',
         game.quest()+'\n\nСдай через /сдать с текстом или картинкой. Модератор проверит.\nНаграда: 80 монеток и 40 опыта.','chef'),ephemeral=True)
 
 
@@ -353,7 +382,7 @@ async def help_command(i:discord.Interaction):
 @bot.tree.command(name='профиль',description='Монетки, ранг, достижения и твой образ Мразика')
 @app_commands.guild_only()
 async def profile_command(i:discord.Interaction):
-    await i.response.send_message(**profile(i.guild_id,i.user.id),ephemeral=True)
+    await send_card(i,**profile(i.guild_id,i.user.id),ephemeral=True)
 
 
 @bot.tree.command(name='ежедневно',description='Забрать подачку дня и продолжить серию визитов')
@@ -364,7 +393,7 @@ async def daily_command(i:discord.Interaction): await daily_response(i)
 @bot.tree.command(name='мразик',description='Открыть своего Мразика: состояние, опыт, кормление и игры')
 @app_commands.guild_only()
 async def pet_command(i:discord.Interaction):
-    await i.response.send_message(**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
+    await send_card(i,**pet_card(i.guild_id,i.user.id),view=PetView(),ephemeral=True)
 
 
 @bot.tree.command(name='магазин',description='Купить костюм за игровые монетки')
@@ -377,7 +406,7 @@ async def shop_command(i:discord.Interaction): await shop_response(i)
 async def wardrobe_command(i:discord.Interaction):
     view=SafeView()
     owned=game.owned(i.guild_id,i.user.id)
-    view.add_item(OutfitSelect(i.user.id,'personal',owned))
+    for n in range(0,len(owned),25):view.add_item(OutfitSelect(i.user.id,'personal',owned[n:n+25],n//25+1))
     await send_view(i,view,**card('Твои тряпки','\n'.join(OUTFITS[k]['name'] for k in owned)),ephemeral=True)
 
 
@@ -385,14 +414,15 @@ async def wardrobe_command(i:discord.Interaction):
 @app_commands.guild_only()
 async def dress_command(i:discord.Interaction):
     view=SafeView()
-    view.add_item(OutfitSelect(i.user.id,'personal',game.owned(i.guild_id,i.user.id)))
+    owned=game.owned(i.guild_id,i.user.id)
+    for n in range(0,len(owned),25):view.add_item(OutfitSelect(i.user.id,'personal',owned[n:n+25],n//25+1))
     await send_view(i,view,**card('Наряди своего Мразика','Выбирай из своей коллекции. Переодеваешь только своего питомца.'),ephemeral=True)
 
 
 @bot.tree.command(name='ранги',description='Ранги участников и пороги опыта')
 @app_commands.guild_only()
 async def ranks_command(i:discord.Interaction):
-    await i.response.send_message(**card('Лестница сомнительного успеха',
+    await send_card(i,**card('Лестница сомнительного успеха',
         '\n'.join(f'**{name}** — {xp} XP' for xp,name in RANKS)+'\n\nРанг зависит от опыта твоего питомца. Discord-роли включает модератор: /роли_настроить. Костюмы покупаются отдельно.','king'),ephemeral=True)
 
 
@@ -400,15 +430,21 @@ ART_NAMES={**{k:v['name'] for k,v in OUTFITS.items()},'hungry':'Голодный
            'sleep':'Спящая мразота','laugh':'Злорадство','victory':'Нечестная победа'}
 
 
-@bot.tree.command(name='альбом',description='Посмотреть все 16 картинок Мразика, в том числе костюмы до покупки')
+@bot.tree.command(name='альбом',description='Альбом: 36 картинок, включая редкие образы; начни вводить название')
 @app_commands.guild_only()
-@app_commands.choices(образ=[app_commands.Choice(name=v,value=k) for k,v in ART_NAMES.items()])
-async def album_command(i:discord.Interaction,образ:app_commands.Choice[str]):
-    key=образ.value
+async def album_command(i:discord.Interaction,образ:str):
+    key=образ
+    if key not in ART_NAMES:raise GameError("Выбери образ из подсказок при вводе команды.")
     info=OUTFITS.get(key)
     description=(f"Цена: {info['price']} монеток · Нужно {info['xp']} опыта.\nКупить: /магазин." if info and key!='base'
                  else 'Обитатель Логова во всей своей сомнительной красе.')
-    await i.response.send_message(**card(ART_NAMES[key],description,key),ephemeral=True)
+    if info and info.get('rare'):description='Редкий образ: выпадает из коллекционного сундука. Купить нельзя.'
+    await send_card(i,**card(ART_NAMES[key],description,key),ephemeral=True)
+
+
+@album_command.autocomplete('образ')
+async def album_autocomplete(i:discord.Interaction,current:str):
+    return [app_commands.Choice(name=v,value=k) for k,v in ART_NAMES.items() if current.casefold() in v.casefold() or current.casefold() in k][:25]
 
 
 @bot.tree.command(name='викторина',description='Новый вопрос без повторов: 45 секунд, пауза 10 минут, до 3 вопросов в день')
@@ -431,14 +467,14 @@ async def duel_command(i:discord.Interaction,соперник:discord.Member):
 @app_commands.guild_only()
 async def expedition_command(i:discord.Interaction):
     event,r=game.expedition(i.guild_id,i.user.id)
-    await i.response.send_message(**card('Вылазка на помойку',event+'\n'+reward_text(r),'hobo'),ephemeral=True)
+    await send_card(i,**card('Вылазка на помойку',event+'\n'+reward_text(r),'hobo'),ephemeral=True)
 
 
 @bot.tree.command(name='предсказание',description='Сомнительная мудрость Мразика')
 @app_commands.guild_only()
 async def fortune_command(i:discord.Interaction):
     game.cooldown(i.guild_id,i.user.id,'fortune',60)
-    await i.response.send_message(**card('Мразик видит твоё будущее',random.choice(FORTUNES),'mage'),ephemeral=True)
+    await send_card(i,**card('Мразик видит твоё будущее',random.choice(FORTUNES),'mage'),ephemeral=True)
 
 
 @bot.tree.command(name='участие',description='Добровольно вступить в розыгрыш шуточных званий или выйти')
@@ -453,7 +489,7 @@ async def opt_command(i:discord.Interaction,включить:bool):
 async def title_command(i:discord.Interaction):
     game.cooldown(i.guild_id,i.user.id,'title',60)
     u,title=game.title(i.guild_id)
-    await i.response.send_message(**card(title,f'Сегодня это <@{u}>.\nУчастие добровольное: /участие.','laugh'))
+    await send_card(i,**card(title,f'Сегодня это <@{u}>.\nУчастие добровольное: /участие.','laugh'))
 
 
 @bot.tree.command(name='топ',description='Десятка участников по опыту за неделю или за всё время')
@@ -461,7 +497,7 @@ async def title_command(i:discord.Interaction):
 async def top_command(i:discord.Interaction,за_всё_время:bool=False):
     rows=game.top(i.guild_id,not за_всё_время)
     body='\n'.join(f'{n}. <@{r[0]}> — {r[1]} XP' for n,r in enumerate(rows,1)) or 'Пока пусто. Самое время стать первым.'
-    await i.response.send_message(**card('Слава Логова • '+('всё время' if за_всё_время else 'эта неделя'),body,'king'),ephemeral=True)
+    await send_card(i,**card('Слава Логова • '+('всё время' if за_всё_время else 'эта неделя'),body,'king'),ephemeral=True)
 
 
 @bot.tree.command(name='задание',description='Творческое задание дня')
@@ -555,7 +591,7 @@ async def setup_command(i:discord.Interaction,канал:app_commands.Transform[
 @app_commands.checks.has_permissions(manage_guild=True)
 async def panel_command(i:discord.Interaction):
     if not await allowed(i): return
-    await i.response.send_message(**card('Мразотное Логово',
+    await send_card(i,**card('Мразотное Логово',
         'Я Мразик. Живу тут, жру тут, осуждаю тоже тут.\n\n'
         'Прокачивай своего Мразика, собирай тряпки, вызывай друзей на дуэли. Кнопки ниже — твой вход в Логово.\n'
         'Все команды: /помощь.'),view=HomeView())
@@ -573,7 +609,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 3.2: TextDestination + interaction deadline diagnostics')
+    log.info('Mrazik build 4: inventory, maze, auto rewards, 20 new outfits')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)

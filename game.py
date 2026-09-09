@@ -12,9 +12,10 @@ from activities import ActivitiesMixin, GameError
 
 from quiz_history import QuizHistoryMixin
 from personal_pets import PersonalPetsMixin
+from adventures import AdventuresMixin
 
 
-class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin):
+class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin, AdventuresMixin):
     def __init__(self, path='data/gnid.sqlite3', tz='Europe/Moscow', clock=time.time):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, isolation_level=None)
@@ -51,6 +52,7 @@ class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin):
         self.init_v2()
         self.init_quiz_history()
         self.init_personal_pets()
+        self.init_adventures()
 
     @contextmanager
     def tx(self):
@@ -119,7 +121,7 @@ class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin):
             return self._reward(g,u,60+min(streak-1,6)*10,20,False),streak
 
     def purchase(self, g, u, item):
-        if item not in OUTFITS or item == 'base':
+        if item not in OUTFITS or item == 'base' or OUTFITS.get(item,{}).get('rare'):
             raise GameError('Выбери костюм из магазина.')
         with self.tx():
             user, info = self.user(g,u), OUTFITS[item]

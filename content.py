@@ -91,3 +91,7 @@ def badges(user, owned):
 
 from logovo_content import THEMED_QUIZ
 QUIZ.extend(THEMED_QUIZ)
+
+from collection import SHOP_OUTFITS, RARE_OUTFITS
+OUTFITS.update({k:dict(name=n,price=p,xp=x) for k,(n,p,x) in SHOP_OUTFITS.items()})
+OUTFITS.update({k:dict(name=n,price=0,xp=0,rare=True) for k,n in RARE_OUTFITS.items()})
