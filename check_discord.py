@@ -69,7 +69,7 @@ async def check():
         assert bot.HomeView().is_persistent()
         assert bot.PetView().is_persistent()
         cmds=bot.bot.tree.get_commands()
-        assert len(cmds)==35, len(cmds)
+        assert len(cmds)==38, len(cmds)
         assert {'мразик','сундуки','угадай','рыбалка','роли_настроить','роль','события','событие'} <= {c.name for c in cmds}
         assert 'гнидь' not in {c.name for c in cmds}
         for cmd in cmds:

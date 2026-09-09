@@ -14,6 +14,7 @@ from content import OUTFITS, RANKS, QUIZ, FORTUNES, badges, rank
 from game import Game, GameError
 from features import FeatureService, EventButton, resolve_text_channel, TextDestination
 from expansion import Expansion, NavButton, OpenChest, MazeMove
+from roaming import Roaming
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
@@ -80,7 +81,7 @@ async def allowed(i, bypass_channel=False):
 
 class Tree(app_commands.CommandTree):
     async def interaction_check(self, i):
-        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль','инвентарь','сундук_события'}
+        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль','инвентарь','сундук_события','автопосты','автопост_статус','автопост_сейчас'}
         return await allowed(i, bypass)
 
     async def on_error(self, i, error):
@@ -328,10 +329,12 @@ class Gnid(commands.Bot):
             await self.tree.sync()
         self.daily_posts.start()
         self.features.worker.start()
+        self.roaming.worker.start()
 
     async def close(self):
         self.daily_posts.cancel()
         self.features.worker.cancel()
+        self.roaming.worker.cancel()
         await super().close()
         game.db.close()
 
@@ -360,6 +363,8 @@ bot.features=FeatureService(bot,game,card,allowed,respond_error)
 bot.features.install()
 bot.expansion=Expansion(bot,game,HomeView)
 bot.expansion.install()
+bot.roaming=Roaming(bot,game)
+bot.roaming.install()
 
 
 async def daily_response(i):
@@ -609,7 +614,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 4.1: no daily reward cap, 10 ranks')
+    log.info('Mrazik build 4.2: illustrated roaming events + autopost diagnostics')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)

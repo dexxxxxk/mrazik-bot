@@ -11,7 +11,7 @@ from logovo_content import LOGOVO_STORIES
 from game import GameError
 
 log = logging.getLogger('mrazik.features')
-ADMIN = {'настройка','панель','заявки','проверить','роли_настроить','автороли','события','событие','сундук_события'}
+ADMIN = {'настройка','панель','заявки','проверить','роли_настроить','автороли','события','событие','сундук_события','автопосты','автопост_статус','автопост_сейчас'}
 GAMES = {'викторина','дуэль','экспедиция','предсказание','сундуки','угадай','рыбалка','лабиринт'}
 
 
@@ -70,7 +70,7 @@ class EventButton(discord.ui.DynamicItem[discord.ui.Button], template=r'mrazik:e
         service=i.client.features
         try:
             e=service.game.event(self.eid)
-            if not await service.allowed(i,e['kind']=='drop'):return
+            if not await service.allowed(i,e['kind']=='drop' or e['payload'].get('public_any',False)):return
             await i.response.defer(ephemeral=True)
             if e['kind']=='drop':
                 service.game.collect_drop(i.guild_id,i.user.id,i.channel_id,i.message.id,self.eid)
@@ -275,7 +275,6 @@ class FeatureService:
                 except discord.Forbidden: log.warning('Cannot close event message %s',e['id'])
                 except discord.HTTPException: continue
             self.game.db.execute('UPDATE events SET summary_done=1 WHERE id=?',(e['id'],))
-        await self.bot.expansion.tick_drops()
         queue=self.game.db.execute('''SELECT q.* FROM role_queue q JOIN role_settings s ON s.guild=q.guild
             WHERE s.enabled=1 AND q.retry_at<=? ORDER BY q.retry_at LIMIT 10''',(self.game.clock(),)).fetchall()
         for row in queue:

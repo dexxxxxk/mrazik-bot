@@ -128,18 +128,6 @@ class Expansion:
         else:message=await i.followup.send(embed=embed,view=view,ephemeral=True,wait=True)
         if maze:self.game.db.execute('UPDATE maze_runs SET message=?,channel=? WHERE id=?',(message.id,i.channel_id,maze['id']))
 
-    async def tick_drops(self):
-        for cfg in self.game.db.execute('SELECT * FROM settings').fetchall():
-            guild=self.bot.get_guild(cfg['guild'])
-            if not guild:continue
-            channels=public_channels(guild)
-            if not channels:continue
-            if not self.game.claim_loot_slot(guild.id):continue
-            channel=random.choice(channels)
-            e=self.game.create_loot_drop(guild.id,channel.id)
-            try:await self.bot.features.publish(channel,e)
-            except discord.HTTPException:pass
-
     def install(self):
         tree=self.bot.tree
         @tree.command(name='инвентарь',description='Собранные сундуки: открыть и получить редкий образ, опыт или золото')
@@ -148,12 +136,12 @@ class Expansion:
         @tree.command(name='лабиринт',description='Личный случайный лабиринт на кнопках: 10 минут, 40 монет и 25 XP за выход')
         @app_commands.guild_only()
         async def maze(i:discord.Interaction):await self.navigate(i,'maze')
-        @tree.command(name='сундук_события',description='Включить случайные сундуки в открытых каналах примерно раз в 2–4 часа')
+        @tree.command(name='сундук_события',description='Совместимость: включить случайные события; подробные настройки — /автопосты')
         @app_commands.guild_only()
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)
         async def setting(i:discord.Interaction,включить:bool):
             if not self.game.settings(i.guild_id):raise GameError('Сначала /настройка — выбери основной игровой канал.')
-            self.game.loot_settings(i.guild_id)
-            self.game.db.execute('UPDATE loot_schedule SET enabled=? WHERE guild=?',(int(включить),i.guild_id))
-            await i.response.send_message('Случайные сундуки включены: открытые текстовые каналы, раз в 2–4 часа.' if включить else 'Новые случайные сундуки выключены. Уже полученные остаются в инвентаре.',ephemeral=True)
+            cfg=self.bot.roaming.state(i.guild_id)
+            self.bot.roaming.configure(i.guild_id,включить,cfg['min_minutes'],cfg['max_minutes'])
+            await i.response.send_message('Случайные события включены. Первая попытка через минуту. Проверка: /автопост_статус.' if включить else 'Новые случайные сундуки выключены. Уже полученные остаются в инвентаре.',ephemeral=True)
