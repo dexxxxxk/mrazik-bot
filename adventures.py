@@ -79,7 +79,7 @@ class AdventuresMixin:
                     result=dict(kind='duplicate',coins=coins,xp=xp,text=f'Повтор образа «{RARE_OUTFITS[outfit]}»: +{coins} монет и +{xp} опыта.')
             else:
                 coins,xp=self._reward(g,u,random.randint(50,120),random.randint(15,35),False)
-                result=dict(kind='reward',coins=coins,xp=xp,text=f'+{coins} монет и +{xp} опыта — сверх игрового лимита.')
+                result=dict(kind='reward',coins=coins,xp=xp,text=f'+{coins} монет и +{xp} опыта — без дневного лимита.')
             self.db.execute('UPDATE inventory_chests SET opened=1,result=? WHERE id=?',(json.dumps(result,ensure_ascii=False),cid))
             return result
 

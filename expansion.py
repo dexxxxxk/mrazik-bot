@@ -87,7 +87,7 @@ class Expansion:
         embed=discord.Embed(title='🎒 Твой инвентарь',color=0x9BA95B,
             description=(result+'\n\n' if result else '')+f'Неоткрытых сундуков: **{len(items)}**.\n'
             'В каждом: 20% — один из 10 редких образов; 80% — 50–120 монет и 15–35 XP. '
-            'Повтор редкого образа заменяется на 150 монет и 40 XP. Все награды сундука — сверх дневного лимита.\n'
+            'Повтор редкого образа заменяется на 150 монет и 40 XP. Все награды сундука — без дневного лимита.\n'
             'Редкая одежда остаётся в /гардероб. Посмотреть её можно в /альбом.')
         view=discord.ui.View(timeout=None)
         if items:view.add_item(OpenChest(items[0]['id']))
@@ -100,7 +100,7 @@ class Expansion:
         text=f"{picture}\nХодов: {m['moves']}. Дойди до 🏁. Время: <t:{int(m['expires'])}:R>."
         if reward is not None:text+=f'\nВыход найден! +{reward[0]} монет и +{reward[1]} XP.'+self.bot.features.limit_notice(m['guild'],m['uid'],reward)
         elif m['done']:text+='\nПоход завершён, награда уже начислена.'
-        else:text+='\nНаграда: 40 монет и 25 XP в пределах дневного игрового лимита.'
+        else:text+='\nНаграда: 40 монет и 25 XP без дневного лимита.'
         embed=discord.Embed(title='🧩 Лабиринт Мразика',description=text,color=0x9BA95B)
         view=discord.ui.View(timeout=None)
         for d in ['n','w','s','e']:view.add_item(MazeMove(m['id'],d,bool(m['done'])))

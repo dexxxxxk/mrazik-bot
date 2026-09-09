@@ -97,10 +97,8 @@ class Game(ActivitiesMixin, QuizHistoryMixin, PersonalPetsMixin, AdventuresMixin
     def _reward(self, g, u, coins, xp, capped=True):
         self.user(g,u)
         self.db.execute('INSERT OR IGNORE INTO earnings(guild,uid,day) VALUES(?,?,?)', (g,u,self.day()))
-        row = self.db.execute('SELECT coins,xp FROM earnings WHERE guild=? AND uid=? AND day=?',
-                              (g,u,self.day())).fetchone()
+        # Keep the legacy earnings category for diagnostics; it no longer caps rewards.
         if capped:
-            coins, xp = min(coins,max(0,300-row[0])), min(xp,max(0,200-row[1]))
             self.db.execute('UPDATE earnings SET coins=coins+?,xp=xp+? WHERE guild=? AND uid=? AND day=?',
                             (coins,xp,g,u,self.day()))
         self.db.execute('UPDATE users SET coins=coins+?,xp=xp+? WHERE guild=? AND uid=?', (coins,xp,g,u))

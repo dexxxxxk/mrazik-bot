@@ -609,7 +609,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 4: inventory, maze, auto rewards, 20 new outfits')
+    log.info('Mrazik build 4.1: no daily reward cap, 10 ranks')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)

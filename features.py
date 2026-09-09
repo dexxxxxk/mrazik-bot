@@ -81,7 +81,7 @@ class EventButton(discord.ui.DynamicItem[discord.ui.Button], template=r'mrazik:e
             if e['owner'] and e['kind']=='quiz':
                 p=e['payload'];phrase+=f"\nВерный ответ: **{p['options'][p['answer']]}**."
             if correct and not e['payload'].get('uncapped'):phrase+=service.limit_notice(i.guild_id,i.user.id,r)
-            if e['payload'].get('uncapped'):phrase+='\nНаграда автопоста — сверх дневного лимита.'
+
             from expansion import NavButton
             view=discord.ui.View(timeout=None);view.add_item(NavButton())
             embed=discord.Embed(title='Результат игры',description=f'{phrase}\n+{r[0]} монеток · +{r[1]} опыта',color=0x9BA95B)
@@ -103,29 +103,21 @@ class FeatureService:
         coins,xp=tuple(row) if row else (0,0)
         tomorrow=datetime.fromisoformat(day).date()+timedelta(days=1)
         reset=datetime.combine(tomorrow,time.min,tzinfo=self.game.tz).timestamp()
-        return dict(day=day,coins=coins,xp=xp,coins_left=max(0,300-coins),xp_left=max(0,200-xp),reset=int(reset))
+        return dict(day=day,coins=coins,xp=xp,coins_left=None,xp_left=None,reset=int(reset))
 
     def limit_notice(self,g,u,reward):
-        limits=self.daily_limits(g,u)
-        exhausted=[]
-        if not limits['coins_left']: exhausted.append('монет (300/300)')
-        if not limits['xp_left']: exhausted.append('опыта (200/200)')
-        if not exhausted:return ''
-        return ('\nДостигнут дневной игровой лимит '+', '.join(exhausted)+
-                f". Он личный. Обновление: <t:{limits['reset']}:R>. Подробнее: /награды.")
+        return ''  # Daily currency and XP caps were removed in 4.1.
 
     def rewards_embed(self,g,u):
         limits=self.daily_limits(g,u)
         user=self.game.db.execute('SELECT coins,xp FROM users WHERE guild=? AND uid=?',(g,u)).fetchone()
         coins,xp=tuple(user) if user else (0,0)
-        embed=discord.Embed(title='Твои награды и лимиты',color=0x9BA95B,
+        embed=discord.Embed(title='Твои награды',color=0x9BA95B,
             description=f"Баланс: **{coins}** монет · опыт питомца: **{xp}**.\n"
-            f"Игры за {limits['day']} ({self.game.tz}):\n"
-            f"Монеты: {limits['coins']}/300 · осталось **{limits['coins_left']}**.\n"
-            f"Опыт: {limits['xp']}/200 · осталось **{limits['xp_left']}**.\n"
-            f"Лимиты обновятся <t:{limits['reset']}:R>. Покупки не восстанавливают лимит заработка.\n\n"
-            'Автопосты, сундуки из инвентаря, ежедневная подачка и одобренные работы — сверх лимита. '
-            'Открытие /задание и отправка /сдать ещё не дают награду: нужно одобрение другого модератора через /проверить.')
+            'Дневного лимита монет и опыта больше нет: каждая новая успешная игра даёт полную награду.\n'
+            'Паузы между играми, одна попытка на событие и история вопросов сохраняются. '
+            'Личная викторина: до 3 новых вопросов в день.\n\n'
+            'За /задание награда приходит после одобрения другим модератором через /проверить.')
         rows=self.game.db.execute('SELECT id,day,status FROM submissions WHERE guild=? AND uid=? ORDER BY id DESC LIMIT 5',(g,u)).fetchall()
         status={'pending':'ожидает проверки — пока без награды','approved':'одобрена — начислено 80 монет и 40 XP','rejected':'отклонена — без награды'}
         body='\n'.join(f"№{r['id']} · {r['day']}: {status.get(r['status'],r['status'])}" for r in rows) or 'Сданных творческих работ пока нет.'
@@ -142,7 +134,7 @@ class FeatureService:
         else: commands=[c for c in commands if c.name in names]
         embed=discord.Embed(title='📖 Все команды Мразика',color=0x9BA95B,
             description='Выбери раздел в меню ниже. Все монетки игровые.\n'
-                        'Игровой лимит за день: 300 монеток и 200 опыта. Автопосты, сундуки из инвентаря, подачка и одобренное задание — сверх лимита.')
+                        'Дневного лимита монет и опыта нет. Паузы между играми и защита от повторных наград сохраняются.')
         for cmd in commands:
             params=' '.join(f'<{p.display_name}>' if p.required else f'[{p.display_name}]' for p in cmd.parameters)
             embed.add_field(name=f'/{cmd.name} {params}'.strip(),value=cmd.description,inline=False)
@@ -180,7 +172,7 @@ class FeatureService:
             text+=f"\nЗа улов: 10–50 монеток и {p['xp']} опыта."
         else:
             text+=f"\nНаграда: {p['coins']} монеток и {p['xp']} опыта."
-        text+=('\nНаграды автопоста не ограничены дневным лимитом.' if p.get('uncapped') else '\nНаграды учитывают дневной игровой лимит.')
+        text+='\nНаграды без дневного лимита монет и опыта.'
         return self.card(p['title'],text,p['art'])
 
     async def publish(self,channel,e):
@@ -235,12 +227,12 @@ class FeatureService:
         async with lock:
             if not self.game.roles_enabled(guild.id): return 'Автороли выключены. Модератор может включить /автороли.'
             mapping=self.game.rank_role_map(guild.id)
-            if set(mapping)!=set(dict(RANKS)): raise GameError('Сначала модератор должен выполнить /роли_настроить.')
+            if not {t for t,_ in RANKS[:6]}.issubset(mapping): raise GameError('Сначала модератор должен выполнить /роли_настроить.')
             if not guild.me.guild_permissions.manage_roles: raise GameError('Мразику нужно право «Управлять ролями».')
             # Fetch fresh roles: never trust a cached membership after an earlier update.
             member=await guild.fetch_member(uid)
             xp=self.game.user(guild.id,uid)['xp']
-            threshold=max(t for t,_ in RANKS if t<=xp)
+            threshold=max(t for t,_ in RANKS if t<=xp and t in mapping)
             roles={t:guild.get_role(rid) for t,rid in mapping.items()}
             if any(r is None for r in roles.values()): raise GameError('Ранг удалён. Повтори /роли_настроить.')
             for role in roles.values(): self.check_role(guild,role)
@@ -299,7 +291,7 @@ class FeatureService:
     def install(self):
         tree=self.bot.tree
 
-        @tree.command(name='награды',description='Мои дневные лимиты монет и опыта, время обновления и статусы заданий')
+        @tree.command(name='награды',description='Баланс, правила начисления без дневного лимита и статусы заданий')
         @app_commands.guild_only()
         async def rewards(i:discord.Interaction):
             await i.response.defer(ephemeral=True)
@@ -330,7 +322,7 @@ class FeatureService:
             self.game.queue_role(i.guild_id,i.user.id)
             await i.followup.send(await self.sync_role(i.guild,i.user.id),ephemeral=True)
 
-        @tree.command(name='роли_настроить',description='Создать шесть ролей за опыт и включить автоматическую выдачу')
+        @tree.command(name='роли_настроить',description='Создать недостающие из десяти ролей за опыт и включить автоматическую выдачу')
         @app_commands.guild_only()
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)
@@ -338,7 +330,7 @@ class FeatureService:
             await i.response.defer(ephemeral=True)
             await self.setup_roles(i.guild)
             await i.followup.send('Роли готовы! Существующий опыт учтён. Выдача идёт очередью, обычно до минуты.\n'
-                'Роль Мразика должна оставаться выше всех шести рангов.',ephemeral=True)
+                'Роль Мразика должна оставаться выше всех десяти рангов.',ephemeral=True)
 
         @tree.command(name='автороли',description='Включить или приостановить выдачу ролей за опыт')
         @app_commands.guild_only()

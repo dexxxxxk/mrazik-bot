@@ -95,11 +95,11 @@ class V2Tests(unittest.TestCase):
         self.assertIsNone(self.game.claim_scheduled_event(1,100))
         self.assertTrue(self.game.in_quiet_hours({'quiet_start':23,'quiet_end':(hour+1)%24}))
 
-    def test_new_games_share_reward_cap(self):
+    def test_new_games_pay_full_reward_after_old_cap(self):
         with self.game.tx(): self.game._reward(1,10,299,199)
         e=self.public()
-        self.assertEqual(self.game.answer_activity(1,10,100,200,e['id'],0)[0],(1,1))
-        self.assertEqual(self.game.user(1,10)['coins'],300)
+        self.assertEqual(self.game.answer_activity(1,10,100,200,e['id'],0)[0],(20,12))
+        self.assertEqual(self.game.user(1,10)['coins'],319)
 
     def test_role_queue_retains_newer_xp_and_backfills(self):
         self.game.daily(1,10)

@@ -68,13 +68,13 @@ class GameTests(unittest.TestCase):
         self.game.equip(1,10,'base')
         self.assertEqual(self.game.pet(1,10)['outfit'],'base')
 
-    def test_game_rewards_are_capped_daily_but_daily_bonus_is_separate(self):
+    def test_game_rewards_continue_beyond_old_daily_cap(self):
         for _ in range(30): self.game.quiz_reward(1,10,True)
         u=self.game.user(1,10)
-        self.assertEqual((u['coins'],u['xp']),(300,200))
+        self.assertEqual((u['coins'],u['xp']),(750,450))
         self.game.daily(1,10)
         u=self.game.user(1,10)
-        self.assertEqual((u['coins'],u['xp']),(360,220))
+        self.assertEqual((u['coins'],u['xp']),(810,470))
         self.timestamp+=86400
         self.assertEqual(self.game.quiz_reward(1,10,True),(25,15))
 

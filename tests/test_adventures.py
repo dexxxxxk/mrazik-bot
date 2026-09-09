@@ -54,7 +54,7 @@ class AdventuresTests(unittest.TestCase):
         self.assertTrue(self.game.claim_loot_slot(1));self.assertFalse(self.game.claim_loot_slot(1))
         self.game.db.execute('UPDATE loot_schedule SET enabled=0,next_at=0')
         self.assertFalse(self.game.claim_loot_slot(1))
-    def test_hourly_reward_ignores_cap_manual_keeps_cap(self):
+    def test_hourly_and_manual_rewards_ignore_old_cap(self):
         self.game._reward(1,10,300,200)
         self.game.configure_events(1,True,0,0);self.game.db.execute('UPDATE event_settings SET next_at=0')
         with patch('activities.random.choice',side_effect=lambda xs:'stash' if 'stash' in xs else xs[0]):e=self.game.claim_scheduled_event(1,100)
@@ -63,7 +63,7 @@ class AdventuresTests(unittest.TestCase):
         self.assertTrue(correct);self.assertEqual(r,(e['payload']['coins'],e['payload']['xp']))
         self.now+=301;self.game.expire_events()
         manual=self.game.start_activity(1,10,100,'stash',True);self.game.open_event(manual['id'],201)
-        r,_,_=self.game.answer_activity(1,10,100,201,manual['id'],0);self.assertEqual(r,(0,0))
+        r,_,_=self.game.answer_activity(1,10,100,201,manual['id'],0);self.assertEqual(r,(20,12))
     def test_maze_solvable_persistent_and_pays_once(self):
         m=self.game.start_maze(1,10,100);self.game.db.execute('UPDATE maze_runs SET message=200 WHERE id=?',(m['id'],))
         self.assertEqual(self.game.start_maze(1,10,100)['id'],m['id'])

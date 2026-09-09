@@ -65,3 +65,29 @@ class RoleTests(unittest.IsolatedAsyncioTestCase):
         self.game.enable_roles(1,False)
         await self.service.sync_role(self.guild,10)
         self.guild.fetch_member.assert_not_awaited()
+
+
+    async def test_add_four_roles_preserves_six_ids_and_is_repeatable(self):
+        self.game.db.execute('DELETE FROM rank_roles WHERE guild=1 AND threshold>4000')
+        for n in range(7,11):self.roles.pop(n)
+        old=self.game.rank_role_map(1).copy()
+        async def create(**kw):
+            rid=max(self.roles)+1;role=Role(rid,kw['name']);self.roles[rid]=role;return role
+        self.guild.create_role=AsyncMock(side_effect=create)
+        await self.service.setup_roles(self.guild)
+        self.assertEqual(self.guild.create_role.await_count,4)
+        self.assertEqual({t:self.game.rank_role_map(1)[t] for t in old},old)
+        self.assertEqual(len(self.game.rank_role_map(1)),10)
+        await self.service.setup_roles(self.guild)
+        self.assertEqual(self.guild.create_role.await_count,4)
+
+    async def test_old_six_roles_keep_working_before_setup(self):
+        self.game.db.execute('DELETE FROM rank_roles WHERE guild=1 AND threshold>4000')
+        await self.service.sync_role(self.guild,10)
+        self.member.add_roles.assert_awaited_once_with(self.roles[3],reason='Опыт личного питомца Мразика',atomic=True)
+
+    async def test_existing_high_xp_gets_tenth_rank_without_losing_other_roles(self):
+        self.game.db.execute('UPDATE users SET xp=26000 WHERE guild=1 AND uid=10')
+        await self.service.sync_role(self.guild,10)
+        self.member.add_roles.assert_awaited_once_with(self.roles[10],reason='Опыт личного питомца Мразика',atomic=True)
+        self.member.remove_roles.assert_awaited_once_with(self.roles[1],reason='Обновление игрового ранга',atomic=True)

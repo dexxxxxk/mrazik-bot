@@ -14,13 +14,13 @@ class RewardDiagnosticsTests(unittest.TestCase):
     def cap(self):
         with self.game.tx():self.game._reward(1,10,300,200)
 
-    def test_same_quiz_pays_other_member_when_one_has_reached_cap(self):
+    def test_same_quiz_pays_both_members_after_old_cap(self):
         self.cap()
         e=self.game.start_activity(1,99,100,'quiz',True);self.game.open_event(e['id'],200)
         answer=e['payload']['answer']
-        self.assertEqual(self.game.answer_activity(1,10,100,200,e['id'],answer)[0],(0,0))
+        self.assertEqual(self.game.answer_activity(1,10,100,200,e['id'],answer)[0],(25,15))
         self.assertEqual(self.game.answer_activity(1,20,100,200,e['id'],answer)[0],(25,15))
-        self.assertIn('300/300',self.service.limit_notice(1,10,(0,0)))
+        self.assertEqual(self.service.limit_notice(1,10,(25,15)),'')
         self.assertEqual(self.service.limit_notice(1,20,(25,15)),'')
 
     def test_approved_work_is_paid_above_cap_and_to_author(self):
@@ -47,11 +47,11 @@ class RewardDiagnosticsTests(unittest.TestCase):
         self.clock=current['reset']
         self.assertEqual(self.game.now().hour,0)
         limits=self.service.daily_limits(1,10)
-        self.assertEqual((limits['coins_left'],limits['xp_left']),(300,200))
+        self.assertEqual((limits['coins_left'],limits['xp_left']),(None,None))
 
-    def test_coin_and_xp_caps_are_independent(self):
+    def test_full_rewards_and_no_false_cap_notice(self):
         with self.game.tx():self.game._reward(1,10,300,90)
         with self.game.tx():reward=self.game._reward(1,10,25,15)
-        self.assertEqual(reward,(0,15))
+        self.assertEqual(reward,(25,15))
         notice=self.service.limit_notice(1,10,reward)
-        self.assertIn('монет',notice);self.assertNotIn('200/200',notice)
+        self.assertEqual(notice,'')
