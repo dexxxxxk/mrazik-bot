@@ -96,7 +96,7 @@ class SafeView(discord.ui.View):
 
     async def interaction_check(self, i):
         custom=(i.data or {}).get("custom_id", "")
-        bypass=custom.startswith("mrazik:nav:") or custom in {"mrazik:bag:home","mrazik:help:v2","mrazik:games:v2"}
+        bypass=custom.startswith(("mrazik:nav:","mrazik:auto:")) or custom in {"mrazik:bag:home","mrazik:help:v2","mrazik:games:v2"}
         return await allowed(i,bypass)
 
     async def on_error(self, i, error, item):
@@ -215,6 +215,29 @@ class HomeView(SafeView):
     async def games_button(self,i,button): await bot.expansion.navigate(i,'games')
 
 
+    @discord.ui.button(label='Автопосты: проверка',custom_id='mrazik:auto:status',row=3)
+    async def autopost_status(self,i,button):await autopost_control(i,'status')
+
+    @discord.ui.button(label='Включить автопосты',custom_id='mrazik:auto:enable',row=3)
+    async def autopost_enable(self,i,button):await autopost_control(i,'enable')
+
+    @discord.ui.button(label='Событие сейчас',custom_id='mrazik:auto:now',row=3)
+    async def autopost_now(self,i,button):await autopost_control(i,'now')
+
+
+async def autopost_control(i,action):
+    if not i.guild or not getattr(getattr(i.user,'guild_permissions',None),'manage_guild',False):
+        return await i.response.send_message('Нужно право «Управлять сервером».',ephemeral=True)
+    if action=='status':return await bot.roaming.status(i)
+    await i.response.defer(ephemeral=True)
+    if not game.settings(i.guild_id):raise GameError('Сначала выбери игровой канал через /настройка.')
+    if action=='enable':
+        bot.roaming.configure(i.guild_id,True,60,120)
+        text='Автопосты включены: первая попытка через минуту, затем раз в 60–120 минут. Можно нажать «Событие сейчас».'
+    else:text=await bot.roaming.send(i.guild,force=True)
+    await i.followup.send(text,ephemeral=True)
+
+
 class OutfitSelect(discord.ui.Select):
     def __init__(self, owner, mode, items, page=1):
         self.owner,self.mode=owner,mode
@@ -321,12 +344,19 @@ class Gnid(commands.Bot):
         self.add_view(HomeView())
         self.add_view(PetView())
         gid=os.getenv('GUILD_ID','').strip()
+        log.info('COMMAND_SYNC_BEGIN application=%s GUILD_ID=%s local_count=%s',self.application_id,gid or '(global)',len(self.tree.get_commands()))
         if gid:
             guild=discord.Object(id=int(gid))
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+            synced=await self.tree.sync(guild=guild)
         else:
-            await self.tree.sync()
+            synced=await self.tree.sync()
+        names={c.name for c in synced}
+        log.info('COMMAND_SYNC_RESULT scope=%s count=%s autoposts=%s status=%s now=%s',gid or 'global',len(synced),
+            'автопосты' in names,'автопост_статус' in names,'автопост_сейчас' in names)
+        for c in synced:
+            if c.name.startswith('автопост'):
+                log.info('COMMAND_REGISTERED name=%s id=%s default_permissions=%s',c.name,c.id,c.default_member_permissions)
         self.daily_posts.start()
         self.features.worker.start()
         self.roaming.worker.start()
@@ -604,6 +634,11 @@ async def panel_command(i:discord.Interaction):
 
 @bot.event
 async def on_ready():
+    ids=[g.id for g in bot.guilds]
+    log.info('COMMAND_READY bot_user=%s connected_guilds=%s',bot.user.id,ids)
+    target=os.getenv('GUILD_ID','').strip()
+    if target and int(target) not in ids:
+        log.warning('COMMAND_WRONG_GUILD configured=%s is not among connected servers',target)
     # Server nickname only: never replace the user's token or application settings.
     for guild in bot.guilds:
         if guild.me and guild.me.display_name != 'Мразик':
@@ -614,7 +649,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 4.2: illustrated roaming events + autopost diagnostics')
+    log.info('Mrazik build 4.2.1: command sync diagnostics + autopost panel buttons')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)
