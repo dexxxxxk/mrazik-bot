@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+from datetime import datetime, time, timedelta
 import discord
 from discord import app_commands
 from discord.ext import tasks
@@ -77,6 +78,8 @@ class EventButton(discord.ui.DynamicItem[discord.ui.Button], template=r'mrazik:e
             if e['owner']:
                 try: await i.edit_original_response(view=service.event_view(e,True))
                 except discord.HTTPException: pass
+            if correct:
+                phrase+=service.limit_notice(i.guild_id,i.user.id,r)
             await i.followup.send(f'{phrase}\n+{r[0]} монеток · +{r[1]} опыта',ephemeral=True)
         except Exception as error:
             await service.respond_error(i,error)
@@ -89,9 +92,44 @@ class FeatureService:
         self.setup_locks={}
         self.role_locks={}
 
+    def daily_limits(self,g,u):
+        day=self.game.day()
+        row=self.game.db.execute('SELECT coins,xp FROM earnings WHERE guild=? AND uid=? AND day=?',(g,u,day)).fetchone()
+        coins,xp=tuple(row) if row else (0,0)
+        tomorrow=datetime.fromisoformat(day).date()+timedelta(days=1)
+        reset=datetime.combine(tomorrow,time.min,tzinfo=self.game.tz).timestamp()
+        return dict(day=day,coins=coins,xp=xp,coins_left=max(0,300-coins),xp_left=max(0,200-xp),reset=int(reset))
+
+    def limit_notice(self,g,u,reward):
+        limits=self.daily_limits(g,u)
+        exhausted=[]
+        if not limits['coins_left']: exhausted.append('монет (300/300)')
+        if not limits['xp_left']: exhausted.append('опыта (200/200)')
+        if not exhausted:return ''
+        return ('\nДостигнут дневной игровой лимит '+', '.join(exhausted)+
+                f". Он личный. Обновление: <t:{limits['reset']}:R>. Подробнее: /награды.")
+
+    def rewards_embed(self,g,u):
+        limits=self.daily_limits(g,u)
+        user=self.game.db.execute('SELECT coins,xp FROM users WHERE guild=? AND uid=?',(g,u)).fetchone()
+        coins,xp=tuple(user) if user else (0,0)
+        embed=discord.Embed(title='Твои награды и лимиты',color=0x9BA95B,
+            description=f"Баланс: **{coins}** монет · опыт питомца: **{xp}**.\n"
+            f"Игры за {limits['day']} ({self.game.tz}):\n"
+            f"Монеты: {limits['coins']}/300 · осталось **{limits['coins_left']}**.\n"
+            f"Опыт: {limits['xp']}/200 · осталось **{limits['xp_left']}**.\n"
+            f"Лимиты обновятся <t:{limits['reset']}:R>. Покупки не восстанавливают лимит заработка.\n\n"
+            'Ежедневная подачка и одобренные творческие работы — сверх лимита. '
+            'Открытие /задание и отправка /сдать ещё не дают награду: нужно одобрение другого модератора через /проверить.')
+        rows=self.game.db.execute('SELECT id,day,status FROM submissions WHERE guild=? AND uid=? ORDER BY id DESC LIMIT 5',(g,u)).fetchall()
+        status={'pending':'ожидает проверки — пока без награды','approved':'одобрена — начислено 80 монет и 40 XP','rejected':'отклонена — без награды'}
+        body='\n'.join(f"№{r['id']} · {r['day']}: {status.get(r['status'],r['status'])}" for r in rows) or 'Сданных творческих работ пока нет.'
+        embed.add_field(name='Твои последние работы',value=body,inline=False)
+        return embed
+
     def help_embed(self,category='start'):
         collection={'магазин','гардероб','одеть','ранги','альбом','роль'}
-        social={'участие','кто','задание','сдать','топ','байка'}
+        social={'участие','кто','задание','сдать','топ','байка','награды'}
         groups={'games':GAMES,'collection':collection,'social':social,'admin':ADMIN}
         names=groups.get(category)
         commands=self.bot.tree.get_commands()
@@ -244,6 +282,12 @@ class FeatureService:
 
     def install(self):
         tree=self.bot.tree
+
+        @tree.command(name='награды',description='Мои дневные лимиты монет и опыта, время обновления и статусы заданий')
+        @app_commands.guild_only()
+        async def rewards(i:discord.Interaction):
+            await i.response.defer(ephemeral=True)
+            await i.followup.send(embed=self.rewards_embed(i.guild_id,i.user.id),ephemeral=True)
 
         @tree.command(name='байка',description='Выдуманная история про Dex, Kadi, RobedBroom и Мразика; без наград')
         @app_commands.guild_only()
