@@ -15,6 +15,7 @@ from game import Game, GameError
 from features import FeatureService, EventButton, resolve_text_channel, TextDestination
 from expansion import Expansion, NavButton, OpenChest, MazeMove
 from roaming import Roaming
+from boss import BossService,BossButton
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
@@ -81,7 +82,7 @@ async def allowed(i, bypass_channel=False):
 
 class Tree(app_commands.CommandTree):
     async def interaction_check(self, i):
-        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль','инвентарь','сундук_события','автопосты','автопост_статус','автопост_сейчас'}
+        bypass = i.command and i.command.name in {'настройка','помощь','проверить','заявки','панель','роли_настроить','автороли','события','роль','инвентарь','сундук_события','автопосты','автопост_статус','автопост_сейчас','босс_настройка','босс_призвать'}
         return await allowed(i, bypass)
 
     async def on_error(self, i, error):
@@ -215,6 +216,9 @@ class HomeView(SafeView):
     async def games_button(self,i,button): await bot.expansion.navigate(i,'games')
 
 
+    @discord.ui.button(label='Босс дня',emoji='👹',custom_id='mrazik:boss:home',row=2)
+    async def boss_button(self,i,button):await bot.boss.status(i)
+
     @discord.ui.button(label='Автопосты: проверка',custom_id='mrazik:auto:status',row=3)
     async def autopost_status(self,i,button):await autopost_control(i,'status')
 
@@ -340,7 +344,7 @@ class Gnid(commands.Bot):
                          tree_cls=Tree,allowed_mentions=discord.AllowedMentions.none(),help_command=None)
 
     async def setup_hook(self):
-        self.add_dynamic_items(EventButton,NavButton,OpenChest,MazeMove)
+        self.add_dynamic_items(EventButton,NavButton,OpenChest,MazeMove,BossButton)
         self.add_view(HomeView())
         self.add_view(PetView())
         gid=os.getenv('GUILD_ID','').strip()
@@ -360,11 +364,13 @@ class Gnid(commands.Bot):
         self.daily_posts.start()
         self.features.worker.start()
         self.roaming.worker.start()
+        self.boss.worker.start()
 
     async def close(self):
         self.daily_posts.cancel()
         self.features.worker.cancel()
         self.roaming.worker.cancel()
+        self.boss.worker.cancel()
         await super().close()
         game.db.close()
 
@@ -395,6 +401,8 @@ bot.expansion=Expansion(bot,game,HomeView)
 bot.expansion.install()
 bot.roaming=Roaming(bot,game)
 bot.roaming.install()
+bot.boss=BossService(bot,game)
+bot.boss.install()
 
 
 async def daily_response(i):
@@ -649,7 +657,7 @@ async def on_ready():
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
-    log.info('Mrazik build 4.3: autoposts only in configured game channel')
+    log.info('Mrazik build 5: daily cooperative boss, persistent hourly attacks')
     token=os.getenv('DISCORD_TOKEN','').strip()
     if not token: raise SystemExit('Укажи DISCORD_TOKEN в локальном файле .env. Инструкция: README.md')
     bot.run(token)

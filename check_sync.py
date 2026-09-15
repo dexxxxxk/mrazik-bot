@@ -9,7 +9,7 @@ async def check():
         import bot
         remote=[NS(name=c.name,id=n,default_member_permissions=None) for n,c in enumerate(bot.bot.tree.get_commands())]
         for gid in ['', '123456789']:
-            with patch.dict(os.environ,{'GUILD_ID':gid}),patch.object(bot.bot.tree,'sync',new=AsyncMock(return_value=remote)) as sync,patch.object(bot.bot.daily_posts,'start'),patch.object(bot.bot.features.worker,'start'),patch.object(bot.bot.roaming.worker,'start'):
+            with patch.dict(os.environ,{'GUILD_ID':gid}),patch.object(bot.bot.tree,'sync',new=AsyncMock(return_value=remote)) as sync,patch.object(bot.bot.daily_posts,'start'),patch.object(bot.bot.features.worker,'start'),patch.object(bot.bot.roaming.worker,'start'),patch.object(bot.bot.boss.worker,'start'):
                 await bot.bot.setup_hook()
                 assert sync.await_count==1
                 if gid:assert sync.call_args.kwargs['guild'].id==int(gid)

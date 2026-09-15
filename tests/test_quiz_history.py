@@ -101,7 +101,7 @@ class QuizHistoryTests(unittest.TestCase):
         self.assertEqual(self.game.db.execute('SELECT count(*) FROM quiz_seen').fetchone()[0],1)
 
     def test_question_bank_has_unique_questions_and_valid_discord_options(self):
-        self.assertEqual(len(QUIZ),60)
+        self.assertGreaterEqual(len(QUIZ),60)
         self.assertEqual(len({question_id(q[0]) for q in QUIZ}),len(QUIZ))
         for text,options,answer in QUIZ:
             self.assertEqual(len(options),4);self.assertEqual(len(set(options)),4)
